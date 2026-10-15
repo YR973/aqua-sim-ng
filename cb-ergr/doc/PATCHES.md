@@ -42,3 +42,11 @@ Other notes:
   Tx power). CB-ERGR does not use LIBRA, so P2 will leave that branch alone.
 - Upstream `test/aqua-sim-test-suite.cc` is commented out of the build
   (`# TEST_SOURCES` in `CMakeLists.txt`); not changed.
+
+## 3. M0 acceptance (2026-10-15)
+
+- ns-3.41 configured with `--enable-modules="aqua-sim-ng;cb-ergr;applications;point-to-point-layout"`
+  (debug, examples and tests on); full build passes.
+- `./ns3 run broadcastMAC_example` (upstream example) runs to completion ("fin.").
+- `./ns3 run cb-ergr-smoke` runs to completion.
+- `./test.py -s cb-ergr`: 1 of 1 passed.

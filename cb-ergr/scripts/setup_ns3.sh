@@ -21,7 +21,9 @@ ln -sfn "${REPO_DIR}/cb-ergr" "${NS3_DIR}/contrib/cb-ergr"
 cd "${NS3_DIR}"
 ./ns3 configure --build-profile=debug --enable-examples --enable-tests \
     --disable-python --disable-werror \
-    --enable-modules="aqua-sim-ng;cb-ergr;applications"
+    --enable-modules="aqua-sim-ng;cb-ergr;applications;point-to-point-layout"
+# point-to-point-layout is needed only because netanim (pulled in by one
+# upstream aqua-sim-ng example) has a test that includes it.
 ./ns3 build
 
 echo "ns-3 ready in ${NS3_DIR}"
