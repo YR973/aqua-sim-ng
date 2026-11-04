@@ -139,6 +139,27 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("PreElectionLeadS", "Members announce themselves this long before an election round (lean mode).",
                           DoubleValue(params::timers::kPreElectionLeadS),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_preElectionLeadS), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("QuorumDetection", "D§3 P4: declare a silent head dead after its beacon is overdue and a quorum agrees.",
+                          BooleanValue(params::deadhead::kQuorumDetection),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_quorumDetection), MakeBooleanChecker())
+            .AddAttribute("DeadCheckPeriodS", "How often overdue heads are looked for (s).",
+                          DoubleValue(params::deadhead::kCheckPeriodS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_deadCheckPeriodS), MakeDoubleChecker<double>(0.1))
+            .AddAttribute("DeadGuardS", "Guard past the advertised next beacon before a head counts as overdue (s).",
+                          DoubleValue(params::deadhead::kGuardS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_deadGuardS), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("DeadQuorum", "Observers (including me) needed to declare a head dead.",
+                          UintegerValue(params::deadhead::kQuorum),
+                          MakeUintegerAccessor(&ErgrEmhcRouting::m_deadQuorum), MakeUintegerChecker<int>(1))
+            .AddAttribute("DeadReportTtlS", "How long a received dead-head report counts (s).",
+                          DoubleValue(params::deadhead::kReportTtlS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_deadReportTtlS), MakeDoubleChecker<double>(1.0))
+            .AddAttribute("DeadReportRepeatS", "Minimum time between two reports of the same silent head by one node (s).",
+                          DoubleValue(params::deadhead::kReportRepeatS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_deadReportRepeatS), MakeDoubleChecker<double>(1.0))
+            .AddAttribute("DeadReportJitterS", "Random delay before a report is sent (s).",
+                          DoubleValue(params::deadhead::kReportJitterS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_deadReportJitterS), MakeDoubleChecker<double>(0.0))
             .AddAttribute("AutoElection", "Run the head election (false only in tests that call ForceRole).",
                           BooleanValue(params::timers::kAutoElection),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_autoElection), MakeBooleanChecker())
@@ -183,6 +204,13 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_ackGuardS(params::timers::kAckGuardS),
       m_phyRxDelayAirtimes(params::timers::kPhyRxDelayAirtimes),
       m_retriesAlwaysAck(params::timers::kRetriesAlwaysAck),
+      m_quorumDetection(params::deadhead::kQuorumDetection),
+      m_deadCheckPeriodS(params::deadhead::kCheckPeriodS),
+      m_deadGuardS(params::deadhead::kGuardS),
+      m_deadReportTtlS(params::deadhead::kReportTtlS),
+      m_deadReportRepeatS(params::deadhead::kReportRepeatS),
+      m_deadReportJitterS(params::deadhead::kReportJitterS),
+      m_deadQuorum(params::deadhead::kQuorum),
       m_autoElection(params::timers::kAutoElection),
       m_expiryBeacons(params::timers::kExpiryBeacons),
       m_receiptKeepBeacons(params::timers::kReceiptKeepBeacons),
@@ -343,6 +371,10 @@ ErgrEmhcRouting::Start()
 
     // Beacons: random first phase so nodes do not all transmit together (spec §5.2).
     Simulator::Schedule(Seconds(m_uniform->GetValue(0.0, m_beaconPeriodS)), &ErgrEmhcRouting::BeaconTick, this);
+    if (m_quorumDetection && !m_isSink)
+    {
+        Simulator::Schedule(Seconds(m_uniform->GetValue(0.0, m_deadCheckPeriodS)), &ErgrEmhcRouting::DeadCheckTick, this);
+    }
 
     if (!m_isSink)
     {
@@ -605,12 +637,16 @@ ErgrEmhcRouting::ExpireNeighbours()
             headsBefore.insert(entry.first);
         }
     }
-    std::set<uint16_t> headsAnywhere;
+    std::set<uint16_t> headsAnywhere, relevantBefore;
     for (const auto& entry : m_table.Rows())
     {
         if (entry.second.isHead)
         {
             headsAnywhere.insert(entry.first);
+            if (IsRelevantHead(entry.second))
+            {
+                relevantBefore.insert(entry.first);
+            }
         }
     }
     Time timeout = Seconds(m_neighbourTimeoutBeacons * m_beaconPeriodS);
@@ -620,9 +656,14 @@ ErgrEmhcRouting::ExpireNeighbours()
     {
         if (headsBefore.count(id) > 0 || headsAnywhere.count(id) > 0)
         {
+            const bool relevant = headsBefore.count(id) > 0 || relevantBefore.count(id) > 0;
             // Only the loss of a head counts as a known change (K§2.3). A head whose beacons stopped for
             // 3 periods is treated as dead (single observer: the quorum of D§3 P4 is not implemented).
-            m_metrics->OnEvent(m_id, "HEAD_DEAD", "id=" + std::to_string(id) + " beacons overdue");
+            m_metrics->OnEvent(m_id, "HEAD_DEAD", "id=" + std::to_string(id) + " beacons overdue (table expiry)");
+            if (relevant)
+            {
+                m_metrics->OnDeadDeclared(m_id, id, false); // same population as the quorum path: own and neighbouring cells
+            }
             m_selector->OnKnownChange(ChangeEvent::NodeLost, Simulator::Now());
         }
         lostOwnCellHead = lostOwnCellHead || headsBefore.count(id) > 0;
@@ -664,6 +705,8 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
         wasHeadInMyCell = old->isHead && old->cellId == m_cell;
     }
     NoteForwarderAlive(hdr.nodeId); // any beacon is a sign of life (D§3 P4)
+    m_deadReports.erase(hdr.nodeId);
+    m_lastDeadReportSent.erase(hdr.nodeId);
     TableUpdateResult result = m_table.Update(entry);
     m_selector->OnBeaconRx(hdr, Simulator::Now());
     if (m_feedback)
@@ -883,6 +926,11 @@ ErgrEmhcRouting::OnElectionFrame(const ErgrElectionHeader& hdr)
 {
     if (hdr.nodeId == m_id)
     {
+        return;
+    }
+    if (hdr.kind == ErgrElectionHeader::DeadReport)
+    {
+        OnDeadReport(hdr); // says nothing about the reporter's own role
         return;
     }
     NeighbourEntry* row = m_table.FindMutable(hdr.nodeId);
@@ -1271,6 +1319,144 @@ ErgrEmhcRouting::IsSuspect(uint16_t fwdId, Time now) const
 {
     auto it = m_suspectUntil.find(fwdId);
     return it != m_suspectUntil.end() && it->second > now;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Quorum dead-head detection (D§3 P4). A head row is OVERDUE when now > beaconTime + advertised next interval + guard
+// (the guard is dropped for a forwarder that is already suspect from ACK timeouts: that is the "upstream head with timeout
+// evidence"). An overdue row makes this node an observer. It broadcasts a DEAD-REPORT (once per DeadReportRepeatS) and
+// declares the head dead when it counts DeadQuorum observers: itself plus fresh reports from other nodes. A node whose own
+// row is NOT overdue ignores reports (it still hears the head), so a single node with a bad link cannot kill a live head.
+// Declaring dead = remove the row, NodeLost to the selector, and a new election if it was a head of my cell.
+// ------------------------------------------------------------------------------------------------
+
+// The observers of D§3 P4 are the co-head and the members of the silent head's cell, plus upstream heads that have
+// timeout evidence against it. So a node watches the heads of its OWN cell, and a head of a neighbouring cell only while it
+// is suspect (two ACK timeouts). Heads further away are never forwarded to and cannot trigger an election.
+bool
+ErgrEmhcRouting::IsRelevantHead(const NeighbourEntry& row) const
+{
+    if (!row.isHead || row.isSink)
+    {
+        return false;
+    }
+    if (row.cellId == m_cell)
+    {
+        return true;
+    }
+    return IsSuspect(row.id, Simulator::Now()) &&
+           const_cast<ErgrEmhcRouting*>(this)->Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly);
+}
+
+bool
+ErgrEmhcRouting::IsOverdue(const NeighbourEntry& row, Time now) const
+{
+    const Time due = row.beaconTime + row.nextBeaconIn;
+    const Time guard = IsSuspect(row.id, now) ? Seconds(0) : Seconds(m_deadGuardS);
+    return now > due + guard;
+}
+
+void
+ErgrEmhcRouting::DeadCheckTick()
+{
+    if (!IsAlive())
+    {
+        return;
+    }
+    const Time now = Simulator::Now();
+    std::vector<uint16_t> overdue;
+    for (const auto& entry : m_table.Rows())
+    {
+        if (IsRelevantHead(entry.second) && IsOverdue(entry.second, now))
+        {
+            overdue.push_back(entry.first);
+        }
+    }
+    for (uint16_t subject : overdue)
+    {
+        // Observers = me + other nodes' reports that are still fresh.
+        auto& reports = m_deadReports[subject];
+        for (auto it = reports.begin(); it != reports.end();)
+        {
+            it = ((now - it->second).GetSeconds() > m_deadReportTtlS) ? reports.erase(it) : std::next(it);
+        }
+        if (static_cast<int>(reports.size()) + 1 >= m_deadQuorum)
+        {
+            DeclareDead(subject, "quorum observers=" + std::to_string(reports.size() + 1));
+            continue;
+        }
+        auto last = m_lastDeadReportSent.find(subject);
+        if (last == m_lastDeadReportSent.end() || (now - last->second).GetSeconds() >= m_deadReportRepeatS)
+        {
+            m_lastDeadReportSent[subject] = now;
+            Simulator::Schedule(Seconds(m_uniform->GetValue(0.0, m_deadReportJitterS)), &ErgrEmhcRouting::SendDeadReport, this,
+                                subject);
+        }
+    }
+    Simulator::Schedule(Seconds(m_deadCheckPeriodS), &ErgrEmhcRouting::DeadCheckTick, this);
+}
+
+void
+ErgrEmhcRouting::SendDeadReport(uint16_t subject)
+{
+    const NeighbourEntry* row = m_table.Find(subject);
+    if (!IsAlive() || !row || !IsOverdue(*row, Simulator::Now()))
+    {
+        return; // the head spoke up (or was already removed) during the jitter delay
+    }
+    ErgrElectionHeader hdr;
+    hdr.kind = ErgrElectionHeader::DeadReport;
+    hdr.nodeId = m_id;
+    hdr.cellId = row->cellId;
+    hdr.rank = 0;
+    hdr.scoreQ = subject;
+    Ptr<Packet> packet = Create<Packet>(0);
+    packet->AddHeader(hdr);
+    m_metrics->OnEvent(m_id, "DEAD_REPORT", "id=" + std::to_string(subject));
+    TransmitFrame(packet, FrameType::Election, kNone, params::phy::kNumPowerLevels - 1);
+}
+
+void
+ErgrEmhcRouting::OnDeadReport(const ErgrElectionHeader& hdr)
+{
+    if (!m_quorumDetection || m_isSink)
+    {
+        return;
+    }
+    const uint16_t subject = hdr.scoreQ;
+    const Time now = Simulator::Now();
+    const NeighbourEntry* row = m_table.Find(subject);
+    if (!row || !IsRelevantHead(*row) || !IsOverdue(*row, now))
+    {
+        return; // I do not track it, or I still hear it: my own evidence outweighs the report
+    }
+    m_deadReports[subject][hdr.nodeId] = now;
+    auto& reports = m_deadReports[subject];
+    for (auto it = reports.begin(); it != reports.end();)
+    {
+        it = ((now - it->second).GetSeconds() > m_deadReportTtlS) ? reports.erase(it) : std::next(it);
+    }
+    if (static_cast<int>(reports.size()) + 1 >= m_deadQuorum)
+    {
+        DeclareDead(subject, "quorum observers=" + std::to_string(reports.size() + 1));
+    }
+}
+
+void
+ErgrEmhcRouting::DeclareDead(uint16_t subject, const std::string& how)
+{
+    const NeighbourEntry* row = m_table.Find(subject);
+    const bool wasHeadOfMyCell = row && row->isHead && row->cellId == m_cell;
+    m_metrics->OnEvent(m_id, "HEAD_DEAD", "id=" + std::to_string(subject) + " " + how);
+    m_metrics->OnDeadDeclared(m_id, subject, true);
+    m_table.Remove(subject);
+    m_deadReports.erase(subject);
+    m_lastDeadReportSent.erase(subject);
+    m_selector->OnKnownChange(ChangeEvent::NodeLost, Simulator::Now());
+    if (wasHeadOfMyCell && !m_isSink)
+    {
+        StartElectionRound("head of my cell dead (quorum)", false);
+    }
 }
 
 // Planned handover (K§2.3): the outgoing head sends its model to the best-ranked non-head member of its cell.

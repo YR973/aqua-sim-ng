@@ -43,6 +43,10 @@ struct ScenarioSettings
     int headsPerCell = params::grid::kHeadsPerCell;
     bool faceOnly = params::grid::kFaceOnly;
     double beaconPeriodS = params::timers::kBeaconPeriodS;
+    bool quorumDetection = params::deadhead::kQuorumDetection;   // D3 P4
+    int deadQuorum = params::deadhead::kQuorum;
+    double deadGuardS = params::deadhead::kGuardS;
+    double deadReportRepeatS = params::deadhead::kReportRepeatS;
     bool leanBeacons = params::timers::kLeanBeacons;        // N-C
     double trickleMaxFactor = params::timers::kTrickleMaxFactor;
     bool headerFirstRx = params::timers::kHeaderFirstRx;    // N-A

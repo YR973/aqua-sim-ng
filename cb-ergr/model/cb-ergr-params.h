@@ -136,6 +136,20 @@ constexpr int kDuplicateCapacity = 1024; // [SPEC] S§7 duplicate filter size
 constexpr double kDuplicateTtlS = 600.0; // [SPEC] S§7 duplicate filter lifetime
 } // namespace timers
 
+// ------------------------------------------------------- dead-head quorum ----
+// D§3 P4: a head is declared dead when its beacon is overdue past its advertised next-beacon time + guard AND a quorum of
+// observers agree. Off by default: the old rule (neighbour-table expiry after 3 beacon periods) stays as the backstop.
+namespace deadhead
+{
+constexpr bool kQuorumDetection = false;  // [DESIGN] D§3 P4
+constexpr double kCheckPeriodS = 10.0;    // [CONFIRM] how often a node looks for overdue heads
+constexpr double kGuardS = 10.0;          // [CONFIRM] guard past the advertised next beacon (propagation 1 s + MAC delays + jitter)
+constexpr int kQuorum = 2;                // [DESIGN] D§3 P4 "any 2 of"
+constexpr double kReportTtlS = 100.0;     // [CONFIRM] a report counts this long (two beacon periods)
+constexpr double kReportRepeatS = 50.0;   // [CONFIRM] an observer repeats its report at most this often while the head stays silent
+constexpr double kReportJitterS = 3.0;    // [CONFIRM] random delay before sending a report, so observers do not collide
+} // namespace deadhead
+
 // ------------------------------------------------------------ election ----
 namespace election
 {

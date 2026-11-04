@@ -141,6 +141,16 @@ class ErgrEmhcRouting : public AquaSimRouting
     void NoteForwarderTimeout(uint16_t fwdId);
     void NoteForwarderAlive(uint16_t fwdId);
     bool IsSuspect(uint16_t fwdId, Time now) const;
+
+    // --- Quorum dead-head detection (D§3 P4) ---
+    void DeadCheckTick();
+    void SendDeadReport(uint16_t subject);
+    void OnDeadReport(const ErgrElectionHeader& hdr);
+    /// True if my row for 'subject' (a head) is overdue past its advertised next beacon + guard (no guard when suspect).
+    bool IsOverdue(const NeighbourEntry& row, Time now) const;
+    bool IsRelevantHead(const NeighbourEntry& row) const;
+    /// Declare 'subject' dead: drop its row, tell the selector, and re-elect if it was a head of my cell.
+    void DeclareDead(uint16_t subject, const std::string& how);
     void HandleVoid(const HeldPacket& pkt);
     void Remember(HeldPacket pkt);
     void Forget(const E2EKey& key);
@@ -208,6 +218,12 @@ class ErgrEmhcRouting : public AquaSimRouting
     uint32_t m_headRoundRobin = 0;
     std::map<uint16_t, int> m_consecutiveTimeouts;   ///< per forwarder: ACK timeouts since the last sign of life
     std::map<uint16_t, Time> m_suspectUntil;          ///< forwarders excluded until this time (D§3 P4)
+    // Quorum dead-head detection
+    bool m_quorumDetection;
+    double m_deadCheckPeriodS, m_deadGuardS, m_deadReportTtlS, m_deadReportRepeatS, m_deadReportJitterS;
+    int m_deadQuorum;
+    std::map<uint16_t, std::map<uint16_t, Time>> m_deadReports;   ///< silent head -> (reporter -> time of its report)
+    std::map<uint16_t, Time> m_lastDeadReportSent;                ///< silent head -> when I last reported it
 
     mutable std::unique_ptr<GridGeometry> m_grid; ///< built on first use (attributes are set after construction)
     Ptr<ForwarderSelector> m_selector;

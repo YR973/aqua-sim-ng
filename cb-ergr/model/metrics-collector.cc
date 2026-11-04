@@ -535,6 +535,28 @@ MetricsCollector::WriteDecisionLine(uint32_t node,
 // ----------------------------------------------------------------- events --
 
 void
+MetricsCollector::OnDeadDeclared(uint32_t node, uint32_t subject, bool byQuorum)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    m_deadDeclarations++;
+    (byQuorum ? m_deadByQuorum : m_deadByExpiry)++;
+    auto it = m_nodes.find(subject);
+    const double deathS = (it != m_nodes.end() && it->second.energy) ? it->second.energy->GetDeathTimeS() : -1.0;
+    if (deathS < 0.0 || deathS > NowS())
+    {
+        m_deadFalse++; // the subject was alive
+        return;
+    }
+    if (m_deadFirstLatencyS.find(subject) == m_deadFirstLatencyS.end())
+    {
+        m_deadFirstLatencyS[subject] = NowS() - deathS;
+    }
+}
+
+void
 MetricsCollector::OnEvent(uint32_t node, const std::string& kind, const std::string& details)
 {
     if (m_cfg.logEvents)
@@ -811,6 +833,7 @@ MetricsCollector::WriteSummary()
          "decisions_scored,regret_mean,regret_mean_multi_viable,share_multi_viable";
     const FrameType energyTypes[] = {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election,
                                      FrameType::Handover, FrameType::Nack};
+    f << ",dead_declarations,dead_false_declarations,dead_by_quorum,dead_by_expiry,dead_heads_detected,dead_first_latency_mean_s";
     for (FrameType t : energyTypes)
     {
         f << ",energy_" << Lower(FrameTypeName(t)) << "_tx_per_delivered_j,energy_" << Lower(FrameTypeName(t))
@@ -862,6 +885,14 @@ MetricsCollector::WriteSummary()
       << (m_regretCount ? m_regretSum / m_regretCount : 0.0) << ','
       << (m_regretCountMulti ? m_regretSumMulti / m_regretCountMulti : 0.0) << ','
       << (m_regretCount ? double(m_regretCountMulti) / m_regretCount : 0.0);
+    double firstLatencySum = 0.0;
+    for (const auto& entry : m_deadFirstLatencyS)
+    {
+        firstLatencySum += entry.second;
+    }
+    f << ',' << m_deadDeclarations << ',' << m_deadFalse << ',' << m_deadByQuorum << ',' << m_deadByExpiry << ','
+      << m_deadFirstLatencyS.size() << ','
+      << (m_deadFirstLatencyS.empty() ? -1.0 : firstLatencySum / m_deadFirstLatencyS.size());
     for (FrameType t : energyTypes)
     {
         f << ',' << m_txEnergyByType[Idx(t)] / deliveredD << ',' << m_rxEnergyByType[Idx(t)] / deliveredD;

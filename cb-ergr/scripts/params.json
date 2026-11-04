@@ -5,6 +5,15 @@
   "kShadowTauS": 120.0,
   "kShadowTickS": 5.0
  },
+ "deadhead": {
+  "kCheckPeriodS": 10.0,
+  "kGuardS": 10.0,
+  "kQuorum": 2,
+  "kQuorumDetection": false,
+  "kReportJitterS": 3.0,
+  "kReportRepeatS": 50.0,
+  "kReportTtlS": 100.0
+ },
  "election": {
   "kBeta": 0.9,
   "kJitterMaxS": 0.1,

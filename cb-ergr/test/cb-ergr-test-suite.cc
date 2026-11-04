@@ -945,6 +945,9 @@ class HeadersRoundTripWithExactSizes : public TestCase
         e.rank = 2;
         e.scoreQ = 65535;
         CheckSize(e, 9, "ELECTION");
+        e.kind = ErgrElectionHeader::DeadReport; // reporter in nodeId, silent head's cell in cellId, its id in scoreQ
+        e.scoreQ = 1234;
+        CheckSize(e, 9, "ELECTION (dead report)");
         ErgrNackHeader n;
         n.nackerId = 1;
         n.upstreamId = 2;
@@ -2307,6 +2310,85 @@ class KilledHeadsAreReplacedByElections : public TestCase
 };
 
 
+// D§3 P4 quorum: a killed head is declared dead by a quorum well before the 3-period table expiry; with an impossible
+// quorum no quorum declaration happens at all (one node alone never declares a head dead).
+class QuorumDetectsAKilledHeadEarlyAndNeedsAQuorum : public TestCase
+{
+  public:
+    QuorumDetectsAKilledHeadEarlyAndNeedsAQuorum()
+        : TestCase("D3 P4: quorum dead-head detection is early, needs the quorum, and is off by default")
+    {
+    }
+
+  private:
+    struct Outcome
+    {
+        double firstQuorumAfterKillS = -1.0;
+        int quorumDeclarations = 0;
+        int reports = 0;
+        double firstKillS = -1.0;
+    };
+
+    static Outcome Run(const std::string& dir, bool quorum, int needed)
+    {
+        ScenarioSettings settings;
+        settings.outDir = dir;
+        settings.seed = 4;
+        settings.numNodes = 60;
+        settings.cellSizeM = 1500.0;
+        settings.simTimeS = 1300;
+        settings.warmupS = 300;
+        settings.pktRateHz = 0.004;
+        settings.currentSpeed = 0.0;
+        settings.killHeadsAtS = 800;
+        settings.killHeadsCells = 3;
+        settings.quorumDetection = quorum;
+        settings.deadQuorum = needed;
+        ScenarioConfig config;
+        RegisterSettings(config, settings);
+        RunScenario(settings, config);
+        Outcome o;
+        for (const CsvRow& e : ReadCsv(dir + "/events.csv"))
+        {
+            const double t = std::stod(e.at("time_s"));
+            if (e.at("event") == "NODE_KILLED" && o.firstKillS < 0)
+            {
+                o.firstKillS = t;
+            }
+            if (e.at("event") == "DEAD_REPORT")
+            {
+                o.reports++;
+            }
+            if (e.at("event") == "HEAD_DEAD" && e.at("details").find("quorum") != std::string::npos)
+            {
+                o.quorumDeclarations++;
+                if (o.firstQuorumAfterKillS < 0 && t >= 800.0)
+                {
+                    o.firstQuorumAfterKillS = t - 800.0;
+                }
+            }
+        }
+        std::filesystem::remove_all(dir);
+        return o;
+    }
+
+    void DoRun() override
+    {
+        std::string base = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-quorum";
+        Outcome off = Run(base + "-off", false, 2);
+        Outcome on = Run(base + "-on", true, 2);
+        Outcome impossible = Run(base + "-imp", true, 1000);
+        NS_TEST_ASSERT_MSG_EQ(off.quorumDeclarations, 0, "off by default: no quorum declarations");
+        NS_TEST_ASSERT_MSG_EQ(off.reports, 0, "off by default: no dead reports");
+        NS_TEST_ASSERT_MSG_EQ((on.quorumDeclarations > 0), true, "a quorum declared the killed head dead");
+        NS_TEST_ASSERT_MSG_EQ((on.firstQuorumAfterKillS >= 0.0 && on.firstQuorumAfterKillS < 150.0), true,
+                              "detected within the 3-period backstop (150 s): " << on.firstQuorumAfterKillS);
+        NS_TEST_ASSERT_MSG_EQ((on.reports > 0), true, "observers sent reports");
+        NS_TEST_ASSERT_MSG_EQ(impossible.quorumDeclarations, 0, "no quorum, no declaration");
+    }
+};
+
+
 // ============================================================ D7 energy ====
 
 // N-A (D§4.2): overheard unicast DATA is charged for preamble + header only; everything else in full.
@@ -2754,6 +2836,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new HandoverGivesTheNewHeadTheOldModel, TestCase::QUICK);
         AddTestCase(new DeadRelayIsSuspectedAndAvoided, TestCase::QUICK);
         AddTestCase(new KilledHeadsAreReplacedByElections, TestCase::QUICK);
+        AddTestCase(new QuorumDetectsAKilledHeadEarlyAndNeedsAQuorum, TestCase::QUICK);
         AddTestCase(new HeaderFirstReceiveChargesOnlyOverheardData, TestCase::QUICK);
         AddTestCase(new HeaderFirstReceiveSavesEnergyOnOverheardData, TestCase::QUICK);
         AddTestCase(new LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking, TestCase::QUICK);

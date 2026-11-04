@@ -160,6 +160,9 @@ class MetricsCollector : public Object
     // --- Protocol events ---
     void OnEvent(uint32_t node, const std::string& kind, const std::string& details);
     void OnHeadChange(uint32_t node, bool isHead, uint16_t cellId);
+    /// A node declared 'subject' dead (by quorum or by table expiry). Ground truth is read here, for reporting only:
+    /// the subject is truly dead if its battery reached 0 earlier; latency = declaration time - death time.
+    void OnDeadDeclared(uint32_t node, uint32_t subject, bool byQuorum);
 
     // --- Final output ---
     /// Close open head tenures, classify packets, run consistency checks, write all CSVs.
@@ -285,6 +288,9 @@ class MetricsCollector : public Object
     /// or overheard) x P_rx x airtime. Rx is a lower bound: frames lost to collisions or PER are charged by the PHY but not
     /// counted here, and header-first receive (N-A) is not subtracted for overheard data.
     std::array<double, kNumFrameTypes> m_txEnergyByType{}, m_rxEnergyByType{};
+    // Dead-head declarations (ground truth used for reporting only).
+    uint32_t m_deadDeclarations = 0, m_deadFalse = 0, m_deadByQuorum = 0, m_deadByExpiry = 0;
+    std::map<uint32_t, double> m_deadFirstLatencyS;   ///< truly dead subject -> latency of the first declaration anywhere
     uint64_t m_electionsAfterWarmup = 0;
 
     // results filled by Finalize()

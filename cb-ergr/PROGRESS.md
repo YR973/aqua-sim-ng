@@ -45,7 +45,7 @@
 ## Next
 1. **Needs the supervisor first** (CONFIRM): E0 / load / Rx charging (E13, Q4), P0 cell size and election (A1-A3, Q1-Q2), published numbers for spec test 16 (E15), FW weight policy (E22), the pilot file (D1/E8/E10).
 2. Full-size runs once settings are frozen on training seeds 101-110: N=250, 20000 s, 20 test seeds 1-20 with `run_sweep.py` + `analyse.py` (use an optimized build: `./ns3 configure --build-profile=optimized`).
-3. Not built: N-B (members sleep), N-D early receipt, quorum-based death detection, start-up wave metrics (P6), design-P7 prior precision, optional 10th feature (onward), `Link=Linear`.
+3. Not built: N-B (members sleep), N-D early receipt, start-up wave metrics (P6), design-P7 prior precision, optional 10th feature (onward), `Link=Linear`.
 4. Findings to take to the supervisor: static rule on CB's features (FW/A1) is about as good as the online learner at this scale (CONFIRM E22); gate and sharing show no effect yet (E21); power arm halves PDR (CHANGELOG D7c); energy is Rx-dominated (E13).
 
 ## How to check everything (end-of-session checklist)

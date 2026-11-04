@@ -2,6 +2,27 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 06:00 — Quorum dead-head detection (D§3 P4)
+- What: routing attribute `QuorumDetection` (default **false**) with `DeadCheckPeriodS`, `DeadGuardS`, `DeadQuorum`, `DeadReportTtlS`, `DeadReportRepeatS`, `DeadReportJitterS` (all defaults in `params::deadhead`); election-frame kind `DeadReport` (same 9 B; nodeId = reporter, cellId = the silent head's cell, scoreQ = the silent head's id); `ErgrEmhcRouting::DeadCheckTick/SendDeadReport/OnDeadReport/DeclareDead/IsOverdue/IsRelevantHead`; `MetricsCollector::OnDeadDeclared` and summary columns `dead_declarations, dead_false_declarations, dead_by_quorum, dead_by_expiry, dead_heads_detected, dead_first_latency_mean_s`; scenario settings `QuorumDetection, DeadQuorum, DeadGuardS, DeadReportRepeatS`; `scripts/quorum_grid.py`; 1 test (48 cases pass).
+- Why: the user's last instruction ("next build the quorum dead-head detection"); design D§3 P4: a head is DEAD when its beacon is overdue past its advertised next-beacon time + guard and a quorum of any 2 observers agrees.
+- How it works: every node (every 10 s) looks at the head rows it can judge: the heads of its OWN cell (co-head and members are the design's observers) and a head of a neighbouring cell only while that head is suspect (two ACK timeouts = the design's "upstream head with timeout evidence", and then the guard is dropped). An overdue row makes the node an observer: it broadcasts a DEAD-REPORT after a random delay (at most once per `DeadReportRepeatS`). A node declares the head dead when its own row is overdue AND it holds `DeadQuorum - 1` fresh reports from other nodes (a node that still hears the head ignores reports, so one node with a bad link cannot kill a live head). Declaring = remove the row, `NodeLost` to the selector, new election if it was a head of the own cell. Any beacon from the head cancels reports about it. The old table expiry (3 beacon periods) stays as the backstop in every mode.
+- Effect on results: none by default. `HEAD_DEAD` events of the old path now say "(table expiry)".
+- Spec/design deviation:
+  1. N-B (members sleep) is not built, so "members at their next wake-up" are simply members that are awake.
+  2. Only own-cell heads (and suspect neighbour heads) are watched; the old expiry path is counted over the same population so the two are comparable. (Counting every head in the table gave 4000 "dead" declarations per run for the old rule alone, almost all marginal far links that dropped out and came back.)
+  3. Ground truth for the accounting (is the subject really dead, since when) is read from the energy models inside `MetricsCollector` only; the routing never sees it.
+- Result (N = 100, 3000 s, RR+feedback, calibrated channel, 10 heads killed at 1500 s, seeds 106-110, per-run means; `results/reference/quorum/grid.txt`):
+  | rule | declarations | of which about a live head | killed heads detected (of 10) | mean latency of the first declaration | PDR |
+  |---|---|---|---|---|---|
+  | table expiry only (backstop) | 207 | 185 | 9.4 | 121 s | 0.497 |
+  | quorum 2, guard 10 s, repeat 10 s | 911 | 890 | 9.4 | 73 s | 0.414 |
+  | quorum 2, guard 25 s, repeat 10 s | 819 | 796 | 9.6 | 78 s | 0.416 |
+  | quorum 2, guard 50 s, repeat 10 s | 404 | 380 | 9.8 | 90 s | 0.452 |
+  | quorum 2, guard 50 s, repeat 50 s | 341 | 317 | 9.8 | 85 s | 0.476 |
+  | quorum 3, guard 60 s, repeat 10 s | 315 | 292 | 9.2 | 111 s | 0.453 |
+  **The quorum detects a dead head 30-50 s earlier (121 s to 73-90 s) but declares live heads dead 2-5 times as often, and PDR falls by 0.02-0.08.** The false declarations are beacon losses: with the calibrated channel (shadowing, PER near the range edge) and broadcast collisions, two nodes missing the same beacon is common, and each false declaration costs a spurious election. Making the guard longer removes the false declarations and the speed-up together (guard 60 s with quorum 3 is no faster than the backstop). So with this channel and load the quorum as specified does not pay off; it stays off by default (`QuorumDetection=false`). The detection that matters for PDR, rerouting around a dead forwarder, is the suspect tier (two ACK timeouts, tens of seconds), which is independent of this rule. A better rule would need evidence that is not subject to the same losses (e.g. requiring observers with a high predicted link success to the head, or an ACK-based probe); not built.
+  Test: with a quorum of 1000 no quorum declaration ever happens (a lone observer never declares); with quorum 2 the killed head is declared within 150 s; with the flag off there are no reports.
+
 ## 2026-11-05 03:00 — Warm-started CB (R13), speed 0 vs 1, head failures; the benchmark is collision-limited
 - What: `CbV5` attribute `NeighbourPrior` (R13b; `PriorWeights` = R13a existed) and service `isNeighbourCell`; `scripts/hop_windows.py`; `sweeps/warmstart-speed-failures.yaml`, `sweeps/warmstart-failures-heavy.yaml`; `.gitignore` for raw sweep output (only `results/reference/` is tracked; the 7.6 MB of raw `results/test16` that went into the previous commit is removed from the index, not from history); test `R13: NeighbourPrior ...` (47 cases pass).
 - Why: instruction of 6 Nov: add warm-started CB (R13) and run it and FW under CurrentSpeed 0 vs 1 and with head failures.

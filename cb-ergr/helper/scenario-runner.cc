@@ -54,6 +54,10 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("HeadsPerCell", &s.headsPerCell, "Heads per cell (k)");
     c.Add("FaceOnly", &s.faceOnly, "Only face-adjacent cells are neighbours");
     c.Add("BeaconPeriodS", &s.beaconPeriodS, "Beacon interval (s)");
+    c.Add("QuorumDetection", &s.quorumDetection, "D3 P4: declare a silent head dead after its beacon is overdue and a quorum agrees");
+    c.Add("DeadGuardS", &s.deadGuardS, "Guard past the advertised next beacon before a head counts as overdue (s)");
+    c.Add("DeadReportRepeatS", &s.deadReportRepeatS, "Minimum time between two reports of the same silent head by one node (s)");
+    c.Add("DeadQuorum", &s.deadQuorum, "Observers (including the node itself) needed to declare a head dead");
     c.Add("LeanBeacons", &s.leanBeacons, "N-C: members beacon only before elections, head beacons stretch (Trickle style)");
     c.Add("TrickleMaxFactor", &s.trickleMaxFactor, "Largest head beacon interval in base periods (lean mode)");
     c.Add("HeaderFirstRx", &s.headerFirstRx, "N-A: overheard unicast data is charged preamble + header only");
@@ -307,6 +311,10 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetAttribute("FaceOnly", BooleanValue(s.faceOnly));
         routing->SetAttribute("BeaconPeriodS", DoubleValue(s.beaconPeriodS));
         routing->SetAttribute("LeanBeacons", BooleanValue(s.leanBeacons));
+        routing->SetAttribute("QuorumDetection", BooleanValue(s.quorumDetection));
+        routing->SetAttribute("DeadQuorum", UintegerValue(s.deadQuorum));
+        routing->SetAttribute("DeadGuardS", DoubleValue(s.deadGuardS));
+        routing->SetAttribute("DeadReportRepeatS", DoubleValue(s.deadReportRepeatS));
         routing->SetAttribute("TrickleMaxFactor", DoubleValue(s.trickleMaxFactor));
         routing->SetAttribute("ElectionPeriodS", DoubleValue(s.electionPeriodS));
         routing->SetAttribute("ElectionBeta", DoubleValue(s.electionBeta));
