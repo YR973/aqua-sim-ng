@@ -2,6 +2,31 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 03:00 — Warm-started CB (R13), speed 0 vs 1, head failures; the benchmark is collision-limited
+- What: `CbV5` attribute `NeighbourPrior` (R13b; `PriorWeights` = R13a existed) and service `isNeighbourCell`; `scripts/hop_windows.py`; `sweeps/warmstart-speed-failures.yaml`, `sweeps/warmstart-failures-heavy.yaml`; `.gitignore` for raw sweep output (only `results/reference/` is tracked; the 7.6 MB of raw `results/test16` that went into the previous commit is removed from the index, not from history); test `R13: NeighbourPrior ...` (47 cases pass).
+- Why: instruction of 6 Nov: add warm-started CB (R13) and run it and FW under CurrentSpeed 0 vs 1 and with head failures.
+- What R13 means here: (a) `PriorWeights`: begin at, and forget toward, the tuned FW weights; (b) `NeighbourPrior`: a node that becomes head with no handover and no model from its own cell starts from the evidence-weighted mean of the models it heard on beacons from the heads of the (26) neighbouring cells (the evidence is averaged, not added; unplanned-import scaling x0.7 as for a takeover). "Neighbour" = grid neighbour, not just radio range.
+- Effect on results: none by default (`NeighbourPrior` false).
+- Spec/design deviation: none beyond the interpretation above.
+- Setup: `configs/g-base.txt` (N = 250, 4 sinks, 750 m cells, 2 heads per cell, E0 10000 J, 0.004 pkt/s), 4000 s, warm-up 500 s, held-out training seeds 106-110, CB hyperparameters = the tuned ones for all CB rows; failures = at 2000 s a random head dies in each of 10 (or 40) random cells that hold at least two live nodes.
+- Result (PDR, mean +- 95% CI, 5 seeds; hop success from `hop_windows.csv`):
+  | | speed 0 | speed 1 | 10 head failures | hop success 300-800 s (speed 1) |
+  |---|---|---|---|---|
+  | RR+FB | 0.170 +- 0.006 | 0.188 +- 0.005 | 0.192 +- 0.011 | 0.202 |
+  | CB (defaults) | 0.200 +- 0.020 | 0.211 +- 0.017 | 0.214 +- 0.018 | 0.210 |
+  | CB-tuned | 0.205 +- 0.024 | 0.210 +- 0.012 | 0.215 +- 0.020 | 0.209 |
+  | CB + warm FW weights | 0.191 +- 0.018 | 0.205 +- 0.015 | 0.210 +- 0.010 | 0.220 |
+  | CB + neighbour prior | 0.207 +- 0.019 | 0.209 +- 0.013 | 0.217 +- 0.015 | 0.209 |
+  | CB + both | 0.189 +- 0.018 | 0.207 +- 0.014 | 0.210 +- 0.012 | 0.220 |
+  | FW tuned | 0.218 +- 0.010 | 0.228 +- 0.009 | 0.230 +- 0.009 | 0.219 |
+  | FW physics | 0.226 +- 0.011 | 0.224 +- 0.008 | 0.229 +- 0.013 | 0.216 |
+  | Oracle | 0.225 +- 0.006 | 0.230 +- 0.010 | 0.239 +- 0.007 | 0.216 |
+  1. **The warm start from the FW weights helps early and nothing later.** Hop success in 300-800 s: 0.220 against 0.209 for CB-tuned (speed 1; 0.215 against 0.207 at speed 0), the gap is gone by ~1500 s, and the final PDR is not higher (0.191 against 0.205 at speed 0; inside the CI). Its regret is lower (0.137 against 0.153 at speed 0) but regret is not PDR here. The neighbour prior changes nothing measurable (no head change without a handover happens often enough, and the neighbours' models are themselves weak).
+  2. **CurrentSpeed 0 vs 1 changes no ranking.** FW-tuned/FW-physics > CB-tuned ≈ CB ≈ warm CB > RR+FB at both speeds; PDR is a little higher at speed 1 for the feedback methods (+0.01 to +0.02; not significant).
+  3. **10 head failures: no measurable effect** (hop success differs by less than 0.012 from the no-failure runs in every window, for every method): with 2 heads per cell, killing one head of 10 cells in ~64 leaves a live co-head and the suspect tier skips the dead one after two ACK timeouts. The recovery metric is therefore undefined (censored) for all methods.
+  4. **40 head failures: PDR goes UP by 0.023-0.029 for every method including the oracle** (e.g. CB-tuned 0.210 to 0.235), after a dip of -0.01 to -0.02 in hop success in the first 150 s. Removing 40 of 250 nodes' worth of heads removes channel contention. See the next point.
+  5. **The N = 250 benchmark is limited by collisions, not by link quality.** With `IdealLinks=true` and `ShadowSigmaDb=0` (no PER at all) the oracle's hop success is 0.252 (0.235 with the calibrated channel); at N = 100 it is 0.43, and 0.595 at one eighth of the traffic. So three quarters of the data hops at N = 250 fail to collisions/half-duplex (no carrier sense in the Aqua-Sim broadcast MAC; every ACK, beacon and data frame is heard by about half of the 3 km box at 5 kbit/s). What a forwarder-selection method can change is the remaining margin (oracle 0.23 PDR against FW 0.22-0.23): this is why no learner can show a large effect at this size, and why killing nodes helps. This is the most important finding for the supervisor: the protocol comparison needs either a MAC with carrier sense (as in the paper) or a lower load; the choice is not mine (CONFIRM E31).
+
 ## 2026-11-04 23:59 — Tuned FW and CB on equal budget, and the three pre-comparison reports
 - What: `scripts/tune.py` (one (1+1)-ES with the 1/5th rule for both targets); `configs/fw-tuned.txt`, `configs/cb-tuned.txt`; `FixedWeight` takes an optional `Weights` attribute (empty = the hand-set physics weights); `compare_smoke.py` variants `FW` (tuned), `FW-phys` (the physics weights, second baseline), `CB-tuned`; per-frame-type energy columns in `summary.csv` (`energy_<type>_{tx,rx}_per_delivered_j`); results in `results/reference/tune/`.
 - Why: user instruction of 6 Nov: replace the hand-set FW weights by weights tuned on the training seeds under the same budget as CB, keep the physics version as a second baseline, and report three things before comparing CB with FW again.

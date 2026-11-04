@@ -109,6 +109,11 @@ SelectorCbV5::GetTypeId()
             .AddAttribute("BetaInflate", "Covariance inflation factor after a head is lost.",
                           DoubleValue(params::sharing::kBetaInflate),
                           MakeDoubleAccessor(&SelectorCbV5::m_betaInflate), MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("NeighbourPrior",
+                          "R13: a head that becomes head without a handover and without a model from its own cell starts from "
+                          "the evidence-weighted mean of the models heard from the heads of neighbouring cells.",
+                          BooleanValue(params::learner::kNeighbourPrior),
+                          MakeBooleanAccessor(&SelectorCbV5::m_neighbourPrior), MakeBooleanChecker())
             .AddAttribute("PriorWeights", "Warm start (D§3 P7): nine comma-separated weights used as the initial theta and as the "
                           "cell prior the model forgets toward. Empty = cold start (theta = 0).",
                           StringValue(""), MakeStringAccessor(&SelectorCbV5::m_priorWeightsText), MakeStringChecker())
@@ -137,6 +142,7 @@ SelectorCbV5::SelectorCbV5()
       m_enablePower(params::learner::kEnablePower),
       m_enableLifetime(params::learner::kEnableLifetime),
       m_enableSharing(params::learner::kEnableSharing),
+      m_neighbourPrior(params::learner::kNeighbourPrior),
       m_marginFromRssi(params::learner::kMarginFromRssi),
       m_ackMode(AckMode::Gated),
       m_lambdaInit(params::price::kLambdaInit),
@@ -507,6 +513,47 @@ SelectorCbV5::OnRoleChange(bool isHead, Time now)
             best = &entry.second;
         }
     }
+    if (!best && m_neighbourPrior && m_model.TraceOwn() <= kDim * m_lambda0 + 1e-6)
+    {
+        // R13: nothing from the own cell, so start from the mean of the neighbouring cells' models (evidence weighted;
+        // the evidence itself is averaged, not added, because the neighbours' data is about other links).
+        const double keepS = params::timers::kBlobKeepBeacons * m_services.beaconPeriodS;
+        Features mean;
+        Features evidenceMean;
+        double weightSum = 0.0;
+        int used = 0;
+        for (auto it = m_neighbourBlobs.begin(); it != m_neighbourBlobs.end();)
+        {
+            if ((now - it->second.receivedAt).GetSeconds() > keepS)
+            {
+                it = m_neighbourBlobs.erase(it);
+                continue;
+            }
+            double s = 0.0;
+            for (int i = 0; i < kDim; ++i)
+            {
+                s += it->second.blob.diagA[i];
+            }
+            mean.AddScaled(it->second.blob.theta, s);
+            evidenceMean.AddScaled(it->second.blob.diagA, 1.0);
+            weightSum += s;
+            used++;
+            ++it;
+        }
+        if (used > 0 && weightSum > 0.0)
+        {
+            CbLearnerModel<kDim>::Snapshot snap;
+            snap.A = Mat<kDim>::ScaledIdentity(m_lambda0);
+            for (int i = 0; i < kDim; ++i)
+            {
+                snap.theta[i] = mean[i] / weightSum;
+                snap.A.At(i, i) += evidenceMean[i] / used;
+            }
+            m_model.SetCellPrior(snap.theta);
+            m_model.ImportHandover(snap, false, m_betaHandover, now.GetSeconds());
+        }
+        return;
+    }
     if (!best || m_model.TraceOwn() > kDim * m_lambda0 + 1e-6)
     {
         return; // nothing shared, or this node already has its own evidence
@@ -548,6 +595,19 @@ SelectorCbV5::OnBeaconTx(ErgrBeaconHeader& beacon, Time now)
 void
 SelectorCbV5::OnBeaconRx(const ErgrBeaconHeader& beacon, Time now)
 {
+    if (m_enableSharing && m_neighbourPrior && beacon.hasBlob && beacon.nodeId != m_services.nodeId && m_services.cellId &&
+        beacon.cellId != m_services.cellId() && m_services.isNeighbourCell && m_services.isNeighbourCell(beacon.cellId))
+    {
+        StoredBlob stored; // kept for a future head of this cell; never merged into the own evidence
+        for (int i = 0; i < kDim; ++i)
+        {
+            stored.blob.theta[i] = beacon.blob.theta[i] * params::sharing::kThetaScale;
+            stored.blob.diagA[i] = beacon.blob.diagA[i] * params::sharing::kDiagScale;
+        }
+        stored.receivedAt = now;
+        m_neighbourBlobs[beacon.nodeId] = stored;
+        return;
+    }
     if (!m_enableSharing || !beacon.hasBlob || beacon.nodeId == m_services.nodeId ||
         !m_services.cellId || beacon.cellId != m_services.cellId())
     {

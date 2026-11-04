@@ -127,6 +127,8 @@ class SelectorCbV5 : public ForwarderSelector
     std::unique_ptr<EnergyPrice> m_price;
     double m_logdetAtLastSync = 0.0;
     std::map<uint16_t, StoredBlob> m_blobs;
+    std::map<uint16_t, StoredBlob> m_neighbourBlobs;   ///< models heard from heads of neighbouring cells (NeighbourPrior)
+    bool m_neighbourPrior;
     PendingHandover m_pendingHandover;
     double m_betaHandover;
     Ptr<NormalRandomVariable> m_normal;

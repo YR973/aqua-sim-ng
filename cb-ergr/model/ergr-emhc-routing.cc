@@ -334,6 +334,7 @@ ErgrEmhcRouting::Start()
         services.airtimeS = [phy](uint32_t bytes) { return phy->CalcTxTime(bytes).GetSeconds(); };
         services.cellId = [this]() { return m_cell; };
         services.isHead = [this]() { return m_isHead; };
+        services.isNeighbourCell = [this](uint16_t cell) { return Grid().AreNeighbours(m_cell, cell, m_faceOnly); };
         m_selector->SetServices(services);
         m_selector->Start();
     }

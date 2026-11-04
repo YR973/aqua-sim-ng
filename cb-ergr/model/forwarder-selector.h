@@ -113,6 +113,7 @@ struct SelectorServices
     std::function<double(uint32_t)> airtimeS;             ///< airtime of a frame of this many bytes
     std::function<uint16_t()> cellId;                     ///< own cell
     std::function<bool()> isHead;                         ///< currently a head?
+    std::function<bool(uint16_t)> isNeighbourCell;        ///< is this cell a grid neighbour of the own cell?
 };
 
 class ForwarderSelector : public Object

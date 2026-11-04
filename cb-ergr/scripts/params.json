@@ -57,6 +57,7 @@
   "kMarginOffsetDb": 10.0,
   "kMarginScaleDb": 30.0,
   "kMu": 0.1,
+  "kNeighbourPrior": false,
   "kOnwardFeature": false,
   "kQueueMax": 10.0,
   "kSigmoidClamp": 30.0,

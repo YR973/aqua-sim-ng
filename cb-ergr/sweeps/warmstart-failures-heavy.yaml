@@ -1,0 +1,18 @@
+# Heavier failure injection for the R13 comparison: 40 cells lose one head at 2000 s (the 10-cell version of warmstart-speed-failures.yaml gave no measurable dip). Same seeds and base as there.
+# against FW (tuned and physics) and the oracle, at current speed 0 and 1 and with head failures (10 cells lose a head at 2000 s).
+# Held-out training seeds 106-110 (tuning used 101-105). Base = configs/g-base.txt (N = 250, 4 sinks, 750 m cells, E0 10000 J, 0.004 pkt/s).
+# Run:  python3 scripts/run_sweep.py sweeps/warmstart-speed-failures.yaml --jobs 4
+#       python3 scripts/analyse.py results/warmstart --kill-time 2000
+binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
+out_root: results/warmstart-heavy
+seeds: [106, 107, 108, 109, 110]
+common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/g-base.txt, SimTimeS: 4000, WarmupS: 500, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false, LogDecisions: true, KillHeadsCells: 40}
+runs:
+  - {name: CB-tuned,     selector: CbV5, attributes: "ExplorationScale=0.763593;Gamma=0.982639;Lambda0=0.774243;KappaP=0.52371"}
+  - {name: CB-warmFW,    selector: CbV5, attributes: "ExplorationScale=0.763593;Gamma=0.982639;Lambda0=0.774243;KappaP=0.52371;PriorWeights=-0.637098,0.172926,1.09302,-0.0815976,0.726163,-0.303015,0.623939,13.2358,-1.16396"}
+  - {name: CB-warmN,     selector: CbV5, attributes: "ExplorationScale=0.763593;Gamma=0.982639;Lambda0=0.774243;KappaP=0.52371;NeighbourPrior=true"}
+  - {name: CB-warmFW+N,  selector: CbV5, attributes: "ExplorationScale=0.763593;Gamma=0.982639;Lambda0=0.774243;KappaP=0.52371;NeighbourPrior=true;PriorWeights=-0.637098,0.172926,1.09302,-0.0815976,0.726163,-0.303015,0.623939,13.2358,-1.16396"}
+  - {name: FW-tuned,     selector: FixedWeight, attributes: "Weights=-0.637098,0.172926,1.09302,-0.0815976,0.726163,-0.303015,0.623939,13.2358,-1.16396"}
+  - {name: O,            selector: Oracle}
+sweeps:
+  - {factor: KillHeadsAtS, values: [2000]}

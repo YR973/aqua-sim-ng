@@ -1439,6 +1439,7 @@ MakeCbSelector(const std::string& attributes, uint16_t nodeId = 1, uint16_t cell
     services.airtimeS = [](uint32_t bytes) { return 0.1 + bytes * 8.0 / 5000.0; };
     services.cellId = [cell]() { return cell; };
     services.isHead = []() { return true; };
+    services.isNeighbourCell = [cell](uint16_t other) { return std::abs(int(other) - int(cell)) == 1; }; // neighbours: adjacent ids
     sel->SetServices(services);
     return sel;
 }
@@ -1695,6 +1696,60 @@ class SharedModelRaisesTheCoHeadsConfidence : public TestCase
     }
 };
 
+
+
+// R13: a head that starts without a handover and without a model from its own cell starts from the neighbouring cell's model.
+class NewHeadStartsFromTheNeighbourCellsModel : public TestCase
+{
+  public:
+    NewHeadStartsFromTheNeighbourCellsModel()
+        : TestCase("R13: NeighbourPrior starts a new head from a neighbouring cell's model")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorCbV5> teacher = MakeCbSelector("EnableLifetime=false", 1, 6);
+        AcousticLinkModel link;
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry nb = MakeNeighbour(11, link.SnrReqDb(ctx.dataBytes) + 10.0);
+        std::vector<Candidate> eligible = {{11, &nb}};
+        for (int n = 0; n < 40; ++n)
+        {
+            Time now = Seconds(1000 + n);
+            Decision d = teacher->Select(ctx, eligible, now);
+            teacher->OnSent(d, now);
+            teacher->OnLabel(d, 1, LabelSource::Ack, now);
+        }
+        ErgrBeaconHeader beacon;
+        beacon.nodeId = 1;
+        beacon.cellId = 6;
+        teacher->OnBeaconTx(beacon, Seconds(1040));
+        NS_TEST_ASSERT_MSG_EQ(beacon.hasBlob, true, "the teacher shares a model");
+
+        Ptr<SelectorCbV5> warm = MakeCbSelector("EnableLifetime=false;NeighbourPrior=true", 2, 5);
+        Ptr<SelectorCbV5> cold = MakeCbSelector("EnableLifetime=false", 3, 5);
+        for (Ptr<SelectorCbV5> s : {warm, cold})
+        {
+            s->OnBeaconRx(beacon, Seconds(1041));
+            NS_TEST_ASSERT_MSG_EQ_TOL(s->Model().Theta().Norm(), 0.0, 1e-12, "nothing is adopted before the node is head");
+            s->OnRoleChange(true, Seconds(1042));
+        }
+        double distance = 0.0;
+        for (int i = 0; i < 9; ++i)
+        {
+            distance += std::fabs(warm->Model().Theta()[i] - teacher->Model().Theta()[i]);
+        }
+        NS_TEST_ASSERT_MSG_EQ((distance < 9.0 / 1024.0 * 2.0), true, "warm head starts at the teacher's theta (quantisation only)");
+        NS_TEST_ASSERT_MSG_EQ_TOL(cold->Model().Theta().Norm(), 0.0, 1e-12, "without NeighbourPrior the head starts cold");
+        // The blob of a cell that is not a neighbour is ignored.
+        Ptr<SelectorCbV5> far = MakeCbSelector("EnableLifetime=false;NeighbourPrior=true", 4, 9);
+        far->OnBeaconRx(beacon, Seconds(1041));
+        far->OnRoleChange(true, Seconds(1042));
+        NS_TEST_ASSERT_MSG_EQ_TOL(far->Model().Theta().Norm(), 0.0, 1e-12, "a distant cell's model is ignored");
+    }
+};
 
 // ============================================================ D6 ===========
 
@@ -2703,6 +2758,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new HeaderFirstReceiveSavesEnergyOnOverheardData, TestCase::QUICK);
         AddTestCase(new LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking, TestCase::QUICK);
         AddTestCase(new PowerLevelsChangeSuccessAndEnergy, TestCase::QUICK);
+        AddTestCase(new NewHeadStartsFromTheNeighbourCellsModel, TestCase::QUICK);
         AddTestCase(new PublishedGeometryHas32NeighboursAndBfsHmin, TestCase::QUICK);
         AddTestCase(new PublishedProtocolRunsAndIsDeterministic, TestCase::QUICK);
     }

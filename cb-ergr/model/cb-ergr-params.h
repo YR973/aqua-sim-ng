@@ -168,6 +168,7 @@ constexpr double kCholeskyJitter = 1e-9; // [SPEC] S§8.12
 constexpr int kCholeskyMaxRetries = 3;   // [SPEC] S§8.12
 constexpr bool kEnablePower = false;     // [DESIGN] K§2.3 optional, ablation only
 constexpr bool kEnableLifetime = true;   // [SPEC] S§10
+constexpr bool kNeighbourPrior = false;  // [DESIGN] R13: a new head without a handover starts from the mean of the neighbouring cells' shared models
 constexpr bool kEnableSharing = true;    // [SPEC] S§10
 constexpr bool kMarginFromRssi = true;   // [DESIGN] K§2.3
 constexpr bool kOnwardFeature = false;   // [DESIGN] K§2.3 (D = 10 if true)
