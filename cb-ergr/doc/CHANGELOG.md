@@ -2,6 +2,17 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-06 02:00 — D7a head failure: suspect tier, planned handover, unplanned takeover, failure injection
+- What: `ErgrHandoverHeader` (115 B) and HANDOVER frames; selector hooks `OnRoleChange`, `OnHandoverOut/In` with the CB implementation; suspect tier in routing (`NoteForwarderTimeout/Alive`, `IsSuspect`); `ErgrEmhcRouting::Kill()`; `KillHeadsAtS`/`KillHeadsCells` in the scenario; `fwd_cell` in decisions.csv; events `HEAD_SUSPECT`, `HEAD_DEAD`, `HANDOVER_OUT/IN`, `NODE_KILLED`; energy-model bookkeeping records a death when the battery is set to 0 (patch P4). 3 new tests (42 cases pass), including spec test 14.
+- Why: kickoff §2.1 (failure detection), §2.3 (planned vs unplanned handover), §4 D7, design D§3 P3-P5, P8.
+- Effect on results: all feedback methods now skip a suspect forwarder; ranking unchanged (seeds 101-103: RR+FB 0.501, FW 0.560, CB 0.521, O 0.594).
+- Spec/design deviation:
+  1. **Suspect = 2 consecutive ACK timeouts** to a forwarder with no ACK or beacon from it in between; it is skipped for one beacon period, **but used again if nothing else is eligible**. The first version excluded the only candidate and broke test 12 (a relay with a single next hop stopped forwarding under 30% loss); caught by that test.
+  2. **"Dead" is the existing 3-beacon expiry of a head row** (single observer, event `HEAD_DEAD`); the quorum of 2 from D§3 P4 is not implemented (it would need extra messages). Consequence: detection of a silent head takes up to 150 s; the suspect tier covers the fast reroute (a few seconds). Recorded as CONFIRM E23.
+  3. **Planned handover** is sent whenever a live head stops being head (left the cell, outranked, conflict). The successor is the best-scored non-head member of the cell in the old head's table; it applies the model if it becomes head within `HandoverKeepS` = 400 s, otherwise the model is dropped. A is sent as 9 uint16 diagonal + 36 int16 off-diagonal values at 1/16 (spec §6.4 says "45 x uint16"; off-diagonals can be negative, so they are int16).
+  3b. **Unplanned takeover** (a head is elected without a handover): the node adopts the strongest model the cell shared on beacons, with A rebuilt as lambda0 I + diag(evidence) and scaled by 0.7. Inflation of the survivors (BetaInflate) happens separately on a lost head, as K§2.3 says.
+  4. **Failure injection** kills one random head in each of `KillHeadsCells` random cells that have at least two live nodes and a head, by emptying the battery (it appears as `NODE_KILLED` then `NODE_DIED`). Recovery-time analysis from the logs is not written yet (needs `analyse.py`).
+
 ## 2026-11-05 22:00 — D6b oracles (O, GO), regret, offline-fitted A1
 - What: new `oracle-evaluator.{h,cc}` (the only reader of true positions/shadowing), `selector-oracle.{h,cc}` (`Oracle`, and `GeoOracle` = GeoOnly), `SelectorFittedLogistic` (A1) next to `SelectorFixedWeight` sharing `SelectByWeights`, `scripts/fit_a1.py`, `configs/a1-weights.txt`; a decision observer in routing, `OnRegret` in the metrics and four summary columns (`decisions_scored`, `regret_mean`, `regret_mean_multi_viable`, `share_multi_viable`); RoundRobin now logs the features of its chosen option (for the fit; the choice does not use them). 3 new tests (39 cases pass).
 - Why: kickoff §2.4 / §4 D6, spec §11 O, GO, A1 and §13.1 regret.

@@ -177,6 +177,9 @@ void
 AquaSimEnergyModel::SetEnergy(double energy)
 {
   NS_LOG_FUNCTION(this << energy);
+  // CB-ERGR bookkeeping: setting the battery to 0 or below (e.g. a forced failure) counts as a death.
+  if (energy <= 0.0 && m_deathTimeS < 0.0)
+    m_deathTimeS = Simulator::Now().GetSeconds();
 
   m_energy = energy;
 }

@@ -173,6 +173,35 @@ class ErgrElectionHeader : public Header
     uint16_t scoreQ = 0;       ///< election score in [0,1] quantised to 16 bits
 };
 
+// -------------------------------------------------------------- HANDOVER ---
+
+/**
+ * Planned handover of a cell's learned model from the outgoing head to its successor (spec §6.4, K§2.3).
+ * theta: int16 at 1/1024; A is sent as its upper triangle: 9 diagonal entries as uint16 and 36 off-diagonal
+ * entries as int16, all at 1/16, saturating (spec §6.4 "45 values at DiagScale").
+ * Size: 1 type + 2 from + 2 to + 2 cell + 18 theta + 18 diagonal + 72 off-diagonal = 115 bytes.
+ */
+class ErgrHandoverHeader : public Header
+{
+  public:
+    static constexpr int kDim = ModelBlob::kDim;
+    static constexpr int kOffDiag = kDim * (kDim - 1) / 2;
+
+    static TypeId GetTypeId();
+    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
+    uint32_t GetSerializedSize() const override;
+    void Serialize(Buffer::Iterator start) const override;
+    uint32_t Deserialize(Buffer::Iterator start) override;
+    void Print(std::ostream& os) const override;
+
+    uint16_t fromId = 0;
+    uint16_t toId = 0;
+    uint16_t cellId = 0;
+    std::array<int16_t, kDim> theta{};
+    std::array<uint16_t, kDim> diag{};
+    std::array<int16_t, kOffDiag> offDiag{};
+};
+
 // ------------------------------------------------------------------ NACK ---
 
 /// Void notification: "I (nackerId) have no eligible forwarder for this packet" (spec §5.2). Unicast to the previous hop.

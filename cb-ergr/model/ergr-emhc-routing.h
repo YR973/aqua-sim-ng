@@ -77,6 +77,9 @@ class ErgrEmhcRouting : public AquaSimRouting
 
     bool IsAlive();
 
+    /// Failure injection: the battery is emptied at once, the node stops and its death is logged.
+    void Kill();
+
     // --- Test hooks (used by the integration tests only) ---
     /// Make this node a head of rank 'rank' (or a member for rank 0) without any election messages.
     void ForceRole(uint8_t rank);
@@ -127,6 +130,11 @@ class ErgrEmhcRouting : public AquaSimRouting
     uint16_t NextHopSeq(uint16_t fwdId);
     void OnData(const ErgrDataHeader& hdr);
     void OnNack(const ErgrNackHeader& hdr);
+    void OnHandover(const ErgrHandoverHeader& hdr);
+    void SendHandoverToSuccessor();
+    void NoteForwarderTimeout(uint16_t fwdId);
+    void NoteForwarderAlive(uint16_t fwdId);
+    bool IsSuspect(uint16_t fwdId, Time now) const;
     void HandleVoid(const HeldPacket& pkt);
     void Remember(HeldPacket pkt);
     void Forget(const E2EKey& key);
@@ -149,6 +157,7 @@ class ErgrEmhcRouting : public AquaSimRouting
     double m_ackProcS, m_ackGuardS, m_phyRxDelayAirtimes;
     bool m_retriesAlwaysAck, m_autoElection;
     double m_expiryBeacons, m_receiptKeepBeacons;
+    int m_suspectTimeouts;
     double m_dataStartS, m_pktRateHz;
     uint32_t m_payloadBytes;
     uint32_t m_duplicateCapacity;
@@ -183,6 +192,8 @@ class ErgrEmhcRouting : public AquaSimRouting
     uint16_t m_ownSeq = 0;
     std::map<uint16_t, uint16_t> m_hopSeq;
     uint32_t m_headRoundRobin = 0;
+    std::map<uint16_t, int> m_consecutiveTimeouts;   ///< per forwarder: ACK timeouts since the last sign of life
+    std::map<uint16_t, Time> m_suspectUntil;          ///< forwarders excluded until this time (D§3 P4)
 
     mutable std::unique_ptr<GridGeometry> m_grid; ///< built on first use (attributes are set after construction)
     Ptr<ForwarderSelector> m_selector;

@@ -126,6 +126,9 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("ReceiptKeepBeacons", "Senders stay in outgoing receipt lists this many beacon periods.",
                           DoubleValue(params::timers::kReceiptKeepBeacons),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_receiptKeepBeacons), MakeDoubleChecker<double>(1.0))
+            .AddAttribute("SuspectTimeouts", "Consecutive ACK timeouts before a forwarder is suspected.",
+                          UintegerValue(params::timers::kSuspectTimeouts),
+                          MakeUintegerAccessor(&ErgrEmhcRouting::m_suspectTimeouts), MakeUintegerChecker<int>(1))
             .AddAttribute("AutoElection", "Run the head election (false only in tests that call ForceRole).",
                           BooleanValue(params::timers::kAutoElection),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_autoElection), MakeBooleanChecker())
@@ -162,6 +165,7 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_nackWindowS(params::timers::kNackWindowS),
       m_voidRetryLimit(params::timers::kVoidRetryLimit),
       m_maxTx(params::timers::kMaxTx),
+      m_suspectTimeouts(params::timers::kSuspectTimeouts),
       m_ackProcS(params::timers::kAckProcS),
       m_ackGuardS(params::timers::kAckGuardS),
       m_phyRxDelayAirtimes(params::timers::kPhyRxDelayAirtimes),
@@ -237,6 +241,15 @@ ErgrEmhcRouting::ResidualFraction()
 }
 
 void
+ErgrEmhcRouting::Kill()
+{
+    std::ostringstream details;
+    details << "cell=" << m_cell << " head=" << m_isHead;
+    m_metrics->OnEvent(m_id, "NODE_KILLED", details.str());
+    GetNetDevice()->GetPhy()->EM()->SetEnergy(0.0);
+}
+
+void
 ErgrEmhcRouting::ForceRole(uint8_t rank)
 {
     if (rank == 0)
@@ -248,6 +261,7 @@ ErgrEmhcRouting::ForceRole(uint8_t rank)
     m_isHead = true;
     m_rank = rank;
     m_metrics->OnHeadChange(m_id, true, m_cell);
+    m_selector->OnRoleChange(true, Simulator::Now());
 }
 
 // =========================================================== start-up ======
@@ -278,6 +292,8 @@ ErgrEmhcRouting::Start()
             RoutePacket(held);
         };
         hooks.drop = [this](const HeldPacket& held, DropReason reason) { Drop(held, reason); };
+        hooks.forwarderTimedOut = [this](uint16_t id) { NoteForwarderTimeout(id); };
+        hooks.forwarderAcked = [this](uint16_t id) { NoteForwarderAlive(id); };
         m_feedback = std::make_unique<FeedbackManager>(fc, m_selector, m_metrics, hooks);
     }
     {
@@ -421,6 +437,12 @@ ErgrEmhcRouting::BeaconTick()
         {
             m_deathLogged = true;
             m_metrics->OnEvent(m_id, "NODE_DIED", "energy exhausted");
+            if (m_isHead)
+            {
+                m_isHead = false; // a dead head ends its tenure silently: no handover (unplanned loss)
+                m_rank = 0;
+                m_metrics->OnHeadChange(m_id, false, m_cell);
+            }
         }
         return; // a dead node stops all activity
     }
@@ -487,7 +509,9 @@ ErgrEmhcRouting::ExpireNeighbours()
     {
         if (headsBefore.count(id) > 0 || headsAnywhere.count(id) > 0)
         {
-            // Only the loss of a head counts as a known change (K§2.3); D6 refines this to deaths.
+            // Only the loss of a head counts as a known change (K§2.3). A head whose beacons stopped for
+            // 3 periods is treated as dead (single observer: the quorum of D§3 P4 is not implemented).
+            m_metrics->OnEvent(m_id, "HEAD_DEAD", "id=" + std::to_string(id) + " beacons overdue");
             m_selector->OnKnownChange(ChangeEvent::NodeLost, Simulator::Now());
         }
         lostOwnCellHead = lostOwnCellHead || headsBefore.count(id) > 0;
@@ -528,6 +552,7 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
     {
         wasHeadInMyCell = old->isHead && old->cellId == m_cell;
     }
+    NoteForwarderAlive(hdr.nodeId); // any beacon is a sign of life (D§3 P4)
     TableUpdateResult result = m_table.Update(entry);
     m_selector->OnBeaconRx(hdr, Simulator::Now());
     if (m_feedback)
@@ -698,6 +723,7 @@ ErgrEmhcRouting::BecomeHead(uint8_t rank)
     m_rank = rank;
     if (!wasHead)
     {
+        m_selector->OnRoleChange(true, Simulator::Now()); // adopt a handed-over or shared model
         m_metrics->OnHeadChange(m_id, true, m_cell);
         std::ostringstream details;
         details << "cell=" << m_cell << " rank=" << int(rank);
@@ -725,6 +751,8 @@ ErgrEmhcRouting::BecomeMember(const char* reason)
     m_rank = 0;
     m_metrics->OnHeadChange(m_id, false, m_cell);
     m_metrics->OnEvent(m_id, "HEAD_RETIRED", reason);
+    SendHandoverToSuccessor(); // planned handover: this head is alive and chose to stop (or was outranked)
+    m_selector->OnRoleChange(false, Simulator::Now());
     ErgrElectionHeader hdr;
     hdr.kind = ErgrElectionHeader::Retire;
     hdr.nodeId = m_id;
@@ -804,6 +832,7 @@ std::vector<Candidate>
 ErgrEmhcRouting::GetEligible(const HeldPacket& pkt, Time now) const
 {
     std::vector<Candidate> eligible;
+    std::vector<Candidate> suspects;
     Vector myPos = EstimatedPosition();
     for (const auto& entry : m_table.Rows())
     {
@@ -812,9 +841,7 @@ ErgrEmhcRouting::GetEligible(const HeldPacket& pkt, Time now) const
         {
             continue;
         }
-        bool inG1 = row.isSink ||
-                    (row.isHead &&
-                     Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly));
+        bool inG1 = row.isSink || (row.isHead && Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly));
         if (!inG1 || row.hmin > pkt.hpkt)
         {
             continue; // spec §5.1: Hmin_j <= Hpkt
@@ -828,9 +855,11 @@ ErgrEmhcRouting::GetEligible(const HeldPacket& pkt, Time now) const
         {
             continue; // K§2.1 loop guard: closer in hops or shallower
         }
-        eligible.push_back(Candidate{row.id, &row});
+        // D§3 P4: a suspect forwarder is skipped for one beacon interval ...
+        (IsSuspect(row.id, now) ? suspects : eligible).push_back(Candidate{row.id, &row});
     }
-    return eligible; // already sorted by id (map order)
+    // ... but it is still better than no forwarder at all: use suspects only as a last resort.
+    return eligible.empty() ? suspects : eligible; // each list is sorted by id (map order)
 }
 
 void
@@ -872,6 +901,10 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
         return;
     }
     decision.numCandidates = static_cast<uint8_t>(eligible.size());
+    if (const NeighbourEntry* chosen = m_table.Find(decision.fwdId))
+    {
+        decision.fwdCell = chosen->cellId;
+    }
     if (m_decisionObserver)
     {
         m_decisionObserver(ctx, eligible, decision, now);
@@ -1095,6 +1128,81 @@ ErgrEmhcRouting::OnData(const ErgrDataHeader& hdr)
     RoutePacket(pkt);
 }
 
+// D§3 P4 "suspect": two ACK timeouts in a row without any sign of life exclude the forwarder for one beacon interval.
+void
+ErgrEmhcRouting::NoteForwarderTimeout(uint16_t fwdId)
+{
+    int& count = m_consecutiveTimeouts[fwdId];
+    count++;
+    if (count >= m_suspectTimeouts)
+    {
+        m_suspectUntil[fwdId] = Simulator::Now() + Seconds(m_beaconPeriodS);
+        m_metrics->OnEvent(m_id, "HEAD_SUSPECT", "fwd=" + std::to_string(fwdId));
+        count = 0;
+    }
+}
+
+// An ACK or a beacon from the forwarder clears suspicion.
+void
+ErgrEmhcRouting::NoteForwarderAlive(uint16_t fwdId)
+{
+    m_consecutiveTimeouts.erase(fwdId);
+    m_suspectUntil.erase(fwdId);
+}
+
+bool
+ErgrEmhcRouting::IsSuspect(uint16_t fwdId, Time now) const
+{
+    auto it = m_suspectUntil.find(fwdId);
+    return it != m_suspectUntil.end() && it->second > now;
+}
+
+// Planned handover (K§2.3): the outgoing head sends its model to the best-ranked non-head member of its cell.
+void
+ErgrEmhcRouting::SendHandoverToSuccessor()
+{
+    ErgrHandoverHeader hdr;
+    if (!m_selector->OnHandoverOut(hdr, Simulator::Now()))
+    {
+        return;
+    }
+    Time now = Simulator::Now();
+    const NeighbourEntry* successor = nullptr;
+    double bestScore = -1.0;
+    for (const auto& entry : m_table.Rows())
+    {
+        const NeighbourEntry& row = entry.second;
+        if (row.isSink || row.isHead || row.cellId != m_cell)
+        {
+            continue;
+        }
+        double score = ScoreOf(row.battery, row.PredictedPos(now), row.cellId, false);
+        if (score > bestScore)
+        {
+            bestScore = score;
+            successor = &row;
+        }
+    }
+    if (!successor)
+    {
+        return;
+    }
+    hdr.fromId = m_id;
+    hdr.toId = successor->id;
+    hdr.cellId = m_cell;
+    Ptr<Packet> packet = Create<Packet>(0);
+    packet->AddHeader(hdr);
+    m_metrics->OnEvent(m_id, "HANDOVER_OUT", "to=" + std::to_string(successor->id));
+    TransmitFrame(packet, FrameType::Handover, successor->id, params::phy::kNumPowerLevels - 1);
+}
+
+void
+ErgrEmhcRouting::OnHandover(const ErgrHandoverHeader& hdr)
+{
+    m_metrics->OnEvent(m_id, "HANDOVER_IN", "from=" + std::to_string(hdr.fromId));
+    m_selector->OnHandoverIn(hdr, Simulator::Now());
+}
+
 void
 ErgrEmhcRouting::OnNack(const ErgrNackHeader& hdr)
 {
@@ -1193,6 +1301,17 @@ ErgrEmhcRouting::Recv(Ptr<Packet> packet, const Address& dest, uint16_t protocol
         if (mine && m_feedback)
         {
             m_feedback->OnAck(hdr.ackerId, hdr.hopSeq);
+        }
+        break;
+    }
+    case FrameType::Handover: {
+        ErgrHandoverHeader hdr;
+        packet->RemoveHeader(hdr);
+        bool mine = hdr.toId == m_id;
+        m_metrics->OnFrameRx(m_id, FrameType::Handover, bytes, mine, hdr.fromId);
+        if (mine)
+        {
+            OnHandover(hdr);
         }
         break;
     }

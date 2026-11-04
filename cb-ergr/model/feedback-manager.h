@@ -76,6 +76,8 @@ class FeedbackManager
     {
         std::function<void(const HeldPacket&)> retry;                         ///< route the packet again (fresh decision)
         std::function<void(const HeldPacket&, DropReason)> drop;              ///< give up on the packet
+        std::function<void(uint16_t)> forwarderTimedOut;                      ///< an ACK timer fired for this forwarder (suspect tier)
+        std::function<void(uint16_t)> forwarderAcked;                         ///< an ACK arrived from this forwarder
     };
 
     FeedbackManager(const Config& cfg, Ptr<ForwarderSelector> selector, Ptr<MetricsCollector> metrics, Hooks hooks);

@@ -18,6 +18,7 @@ NS_OBJECT_ENSURE_REGISTERED(ErgrAckHeader);
 NS_OBJECT_ENSURE_REGISTERED(ErgrBeaconHeader);
 NS_OBJECT_ENSURE_REGISTERED(ErgrElectionHeader);
 NS_OBJECT_ENSURE_REGISTERED(ErgrNackHeader);
+NS_OBJECT_ENSURE_REGISTERED(ErgrHandoverHeader);
 
 uint8_t
 PeekFrameType(Ptr<const Packet> p)
@@ -344,6 +345,72 @@ ErgrElectionHeader::Print(std::ostream& os) const
 {
     os << (kind == Hello ? "HELLO" : "RETIRE") << " node=" << nodeId << " cell=" << cellId
        << " rank=" << int(rank) << " score=" << scoreQ;
+}
+
+// -------------------------------------------------------------- HANDOVER ---
+
+TypeId
+ErgrHandoverHeader::GetTypeId()
+{
+    static TypeId tid = TypeId("ns3::cbergr::ErgrHandoverHeader")
+                            .SetParent<Header>()
+                            .AddConstructor<ErgrHandoverHeader>();
+    return tid;
+}
+
+uint32_t
+ErgrHandoverHeader::GetSerializedSize() const
+{
+    return 1 + 2 + 2 + 2 + 2 * kDim + 2 * kDim + 2 * kOffDiag; // 115
+}
+
+void
+ErgrHandoverHeader::Serialize(Buffer::Iterator i) const
+{
+    i.WriteU8(static_cast<uint8_t>(FrameType::Handover));
+    i.WriteHtonU16(fromId);
+    i.WriteHtonU16(toId);
+    i.WriteHtonU16(cellId);
+    for (int16_t t : theta)
+    {
+        i.WriteHtonU16(static_cast<uint16_t>(t));
+    }
+    for (uint16_t d : diag)
+    {
+        i.WriteHtonU16(d);
+    }
+    for (int16_t o : offDiag)
+    {
+        i.WriteHtonU16(static_cast<uint16_t>(o));
+    }
+}
+
+uint32_t
+ErgrHandoverHeader::Deserialize(Buffer::Iterator i)
+{
+    i.ReadU8();
+    fromId = i.ReadNtohU16();
+    toId = i.ReadNtohU16();
+    cellId = i.ReadNtohU16();
+    for (int16_t& t : theta)
+    {
+        t = static_cast<int16_t>(i.ReadNtohU16());
+    }
+    for (uint16_t& d : diag)
+    {
+        d = i.ReadNtohU16();
+    }
+    for (int16_t& o : offDiag)
+    {
+        o = static_cast<int16_t>(i.ReadNtohU16());
+    }
+    return GetSerializedSize();
+}
+
+void
+ErgrHandoverHeader::Print(std::ostream& os) const
+{
+    os << "HANDOVER from=" << fromId << " to=" << toId << " cell=" << cellId;
 }
 
 // ------------------------------------------------------------------ NACK ---

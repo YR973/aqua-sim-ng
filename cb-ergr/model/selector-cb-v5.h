@@ -75,6 +75,9 @@ class SelectorCbV5 : public ForwarderSelector
     void OnKnownChange(ChangeEvent e, Time now) override;
 
     // --- Sharing ---
+    void OnRoleChange(bool isHead, Time now) override;
+    bool OnHandoverOut(ErgrHandoverHeader& h, Time now) override;
+    void OnHandoverIn(const ErgrHandoverHeader& h, Time now) override;
     void OnBeaconTx(ErgrBeaconHeader& beacon, Time now) override;
     void OnBeaconRx(const ErgrBeaconHeader& beacon, Time now) override;
 
@@ -83,6 +86,14 @@ class SelectorCbV5 : public ForwarderSelector
     double LambdaE() const { return m_price ? m_price->Lambda() : m_lambdaInit; }
 
   private:
+    /// A model received in a HANDOVER frame, waiting until this node becomes head.
+    struct PendingHandover
+    {
+        CbLearnerModel<kDim>::Snapshot snapshot;
+        Time receivedAt;
+        bool valid = false;
+    };
+
     struct StoredBlob
     {
         PeerBlob<kDim> blob;
@@ -105,6 +116,7 @@ class SelectorCbV5 : public ForwarderSelector
     AckMode m_ackMode;
     double m_lambdaInit, m_eta, m_targetLifetimeS, m_priceTickS;
     double m_tauSync, m_cosGate, m_matureTrace, m_betaInflate;
+    double m_handoverKeepS;
     double m_txPowerFullW;
 
     SelectorServices m_services;
@@ -113,6 +125,8 @@ class SelectorCbV5 : public ForwarderSelector
     std::unique_ptr<EnergyPrice> m_price;
     double m_logdetAtLastSync = 0.0;
     std::map<uint16_t, StoredBlob> m_blobs;
+    PendingHandover m_pendingHandover;
+    double m_betaHandover;
     Ptr<NormalRandomVariable> m_normal;
     Ptr<UniformRandomVariable> m_uniform;
 };

@@ -71,6 +71,14 @@ FeedbackManager::Resolve(const HopKey& key, int y, LabelSource src)
     {
         m_buffer.erase(pa.pkt); // the forwarder has it: nothing more to do at this hop
     }
+    if (src == LabelSource::Ack && m_hooks.forwarderAcked)
+    {
+        m_hooks.forwarderAcked(key.fwdId);
+    }
+    else if (src == LabelSource::AckTimeout && m_hooks.forwarderTimedOut)
+    {
+        m_hooks.forwarderTimedOut(key.fwdId);
+    }
 }
 
 void

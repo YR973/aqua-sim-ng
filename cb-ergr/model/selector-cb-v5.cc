@@ -106,6 +106,12 @@ SelectorCbV5::GetTypeId()
             .AddAttribute("BetaInflate", "Covariance inflation factor after a head is lost.",
                           DoubleValue(params::sharing::kBetaInflate),
                           MakeDoubleAccessor(&SelectorCbV5::m_betaInflate), MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("BetaHandover", "Scale applied to A when a head takes over WITHOUT a planned handover.",
+                          DoubleValue(params::sharing::kBetaHandover),
+                          MakeDoubleAccessor(&SelectorCbV5::m_betaHandover), MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("HandoverKeepS", "How long a received handover waits for this node to become head (s).",
+                          DoubleValue(params::timers::kHandoverKeepS),
+                          MakeDoubleAccessor(&SelectorCbV5::m_handoverKeepS), MakeDoubleChecker<double>(0.0))
             .AddAttribute("TxPowerFullW", "Electrical transmit power at the full level (W), for the energy term.",
                           DoubleValue(params::energy::kTxPowerFullW),
                           MakeDoubleAccessor(&SelectorCbV5::m_txPowerFullW), MakeDoubleChecker<double>(0.0));
@@ -135,6 +141,8 @@ SelectorCbV5::SelectorCbV5()
       m_cosGate(params::sharing::kCosGate),
       m_matureTrace(params::sharing::kMatureTrace),
       m_betaInflate(params::sharing::kBetaInflate),
+      m_handoverKeepS(params::timers::kHandoverKeepS),
+      m_betaHandover(params::sharing::kBetaHandover),
       m_txPowerFullW(params::energy::kTxPowerFullW)
 {
     m_normal = CreateObject<NormalRandomVariable>();
@@ -387,6 +395,111 @@ SelectorCbV5::OnKnownChange(ChangeEvent e, Time now)
 }
 
 // ============================================================== Sharing ====
+
+// Planned handover (spec §6.4, K§2.3): the outgoing head sends theta and the full A, unscaled.
+bool
+SelectorCbV5::OnHandoverOut(ErgrHandoverHeader& h, Time now)
+{
+    if (!m_enableSharing)
+    {
+        return false;
+    }
+    // The model includes evidence the cell has shared, so the successor gets the whole cell's knowledge.
+    m_model.BeginDecision(now.GetSeconds());
+    const auto snapshot = m_model.ExportSnapshot();
+    if (snapshot.A.Trace() < kDim * m_lambda0 + 1e-6)
+    {
+        return false; // nothing learned yet
+    }
+    const int dim = kDim;
+    int k = 0;
+    for (int i = 0; i < dim; ++i)
+    {
+        h.theta[i] = QuantiseTheta(snapshot.theta[i]);
+        h.diag[i] = QuantiseDiag(snapshot.A.At(i, i));
+        for (int j = i + 1; j < dim; ++j)
+        {
+            double q = std::round(snapshot.A.At(i, j) / params::sharing::kDiagScale);
+            h.offDiag[k++] = static_cast<int16_t>(std::max(-32768.0, std::min(32767.0, q)));
+        }
+    }
+    return true;
+}
+
+void
+SelectorCbV5::OnHandoverIn(const ErgrHandoverHeader& h, Time now)
+{
+    if (!m_enableSharing)
+    {
+        return;
+    }
+    const int dim = kDim;
+    CbLearnerModel<kDim>::Snapshot snap;
+    int k = 0;
+    for (int i = 0; i < dim; ++i)
+    {
+        snap.theta[i] = h.theta[i] * params::sharing::kThetaScale;
+        snap.A.At(i, i) = h.diag[i] * params::sharing::kDiagScale;
+        for (int j = i + 1; j < dim; ++j)
+        {
+            double v = h.offDiag[k++] * params::sharing::kDiagScale;
+            snap.A.At(i, j) = v;
+            snap.A.At(j, i) = v;
+        }
+    }
+    m_pendingHandover.snapshot = snap;
+    m_pendingHandover.receivedAt = now;
+    m_pendingHandover.valid = true;
+}
+
+// A node that has just become head starts from the best knowledge it can get (K§2.3, D§3 P8):
+//  - a handover it was sent (planned): adopted unscaled;
+//  - otherwise, the model the cell last shared on beacons (the old head is gone, unplanned): adopted with A x 0.7.
+void
+SelectorCbV5::OnRoleChange(bool isHead, Time now)
+{
+    if (!isHead || !m_enableSharing)
+    {
+        return;
+    }
+    const bool fresh = m_pendingHandover.valid &&
+                       (now - m_pendingHandover.receivedAt).GetSeconds() <= m_handoverKeepS;
+    if (fresh)
+    {
+        m_model.ImportHandover(m_pendingHandover.snapshot, true, m_betaHandover, now.GetSeconds());
+        m_pendingHandover.valid = false;
+        return;
+    }
+    m_pendingHandover.valid = false;
+    // No planned handover: use the strongest blob the cell shared (diag(A) only, so build A = lambda0 I + diag(evidence)).
+    const StoredBlob* best = nullptr;
+    double bestEvidence = 0.0;
+    for (const auto& entry : m_blobs)
+    {
+        double evidence = 0.0;
+        for (int i = 0; i < kDim; ++i)
+        {
+            evidence += entry.second.blob.diagA[i];
+        }
+        if (evidence > bestEvidence)
+        {
+            bestEvidence = evidence;
+            best = &entry.second;
+        }
+    }
+    if (!best || m_model.TraceOwn() > kDim * m_lambda0 + 1e-6)
+    {
+        return; // nothing shared, or this node already has its own evidence
+    }
+    CbLearnerModel<kDim>::Snapshot snap;
+    snap.A = Mat<kDim>::ScaledIdentity(m_lambda0);
+    for (int i = 0; i < kDim; ++i)
+    {
+        snap.theta[i] = best->blob.theta[i];
+        snap.A.At(i, i) += best->blob.diagA[i];
+    }
+    m_model.ImportHandover(snap, false, m_betaHandover, now.GetSeconds());
+}
 
 // Spec §8.10: send the model on a beacon when it has grown enough since the last time.
 void

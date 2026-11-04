@@ -75,6 +75,7 @@ struct Decision
     double pMean = 0.0;         ///< predicted success (for logging)
     double width = 0.0;         ///< model uncertainty (for logging)
     double score = 0.0;
+    uint16_t fwdCell = 0;       ///< cell of the chosen forwarder (logging, recovery analysis)
     double aux = 0.0;           ///< selector-specific number kept with the decision (e.g. Q-learning next-state value)
     double lambdaE = 0.0;       ///< energy price at decision time (logging)
     uint8_t numCandidates = 0; ///< how many eligible heads there were
@@ -130,6 +131,15 @@ class ForwarderSelector : public Object
 
     /// Use ns-3 random streams starting at 'stream'; returns how many were used.
     virtual int64_t AssignStreams(int64_t stream) { return 0; }
+
+    /// This node became a head (true) or stopped being one (false). A new head adopts a handed-over or shared model.
+    virtual void OnRoleChange(bool isHead, Time now) {}
+
+    /// Planned handover (spec §6.4): fill 'h' with the model for the successor. Returns false if there is nothing to hand over.
+    virtual bool OnHandoverOut(ErgrHandoverHeader& h, Time now) { return false; }
+
+    /// A HANDOVER addressed to this node arrived.
+    virtual void OnHandoverIn(const ErgrHandoverHeader& h, Time now) {}
 
     /// Spec §5.3: may attach a model blob to the node's own beacon.
     virtual void OnBeaconTx(ErgrBeaconHeader& beacon, Time now) {}

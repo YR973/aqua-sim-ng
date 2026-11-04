@@ -21,6 +21,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 
 namespace ns3
@@ -63,6 +64,8 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("CurrentSpeed", &s.currentSpeed, "Ocean current speed scale U (m/s)");
     c.Add("LocErrM", &s.locErrM, "Position error std per axis (m)");
     c.Add("VelErrMps", &s.velErrMps, "Velocity error std per axis (m/s)");
+    c.Add("KillHeadsAtS", &s.killHeadsAtS, "Failure injection time (s); negative = no failures");
+    c.Add("KillHeadsCells", &s.killHeadsCells, "Number of cells that lose one head at KillHeadsAtS");
     c.Add("RegretAllPowerLevels", &s.regretAllPowerLevels, "Regret compares against all power levels (use with EnablePower=true)");
     c.Add("ComputeRegret", &s.computeRegret, "Measure regret against the oracle at every decision");
     c.Add("LogNodes", &s.logNodes, "Write nodes.csv");
@@ -290,6 +293,52 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     for (Ptr<ErgrEmhcRouting>& routing : routings)
     {
         routing->Start();
+    }
+
+    // Failure injection (D§3 P5): at the chosen time, one random head dies in each of several random cells
+    // that hold at least two live nodes, so a replacement exists.
+    if (s.killHeadsAtS >= 0.0)
+    {
+        Ptr<UniformRandomVariable> pick = CreateObject<UniformRandomVariable>();
+        pick->SetStream(stream++);
+        const int cellsToHit = s.killHeadsCells;
+        Simulator::Schedule(Seconds(s.killHeadsAtS), [routings, pick, cellsToHit]() {
+            std::map<uint16_t, std::vector<Ptr<ErgrEmhcRouting>>> nodesByCell;
+            for (const Ptr<ErgrEmhcRouting>& r : routings)
+            {
+                if (!r->IsSink() && r->IsAlive())
+                {
+                    nodesByCell[r->CellId()].push_back(r);
+                }
+            }
+            std::vector<uint16_t> candidates;
+            for (const auto& entry : nodesByCell)
+            {
+                bool hasHead = false;
+                for (const auto& r : entry.second)
+                {
+                    hasHead = hasHead || r->IsHead();
+                }
+                if (entry.second.size() >= 2 && hasHead)
+                {
+                    candidates.push_back(entry.first);
+                }
+            }
+            for (int k = 0; k < cellsToHit && !candidates.empty(); ++k)
+            {
+                size_t ci = pick->GetInteger(0, candidates.size() - 1);
+                std::vector<Ptr<ErgrEmhcRouting>> heads;
+                for (const auto& r : nodesByCell[candidates[ci]])
+                {
+                    if (r->IsHead())
+                    {
+                        heads.push_back(r);
+                    }
+                }
+                heads[pick->GetInteger(0, heads.size() - 1)]->Kill();
+                candidates.erase(candidates.begin() + ci);
+            }
+        });
     }
 
     // -------------------------------------------------------------- run ----

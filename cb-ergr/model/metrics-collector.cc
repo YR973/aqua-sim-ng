@@ -113,7 +113,7 @@ MetricsCollector::Configure(const Config& cfg)
     if (m_cfg.logDecisions)
     {
         m_decisionsFile.open(m_cfg.outDir + "/decisions.csv");
-        m_decisionsFile << "time_s,node,fwd,hop_seq,power_level,attempt,ar,learn,n_candidates,chosen_rank";
+        m_decisionsFile << "time_s,node,fwd,fwd_cell,hop_seq,power_level,attempt,ar,learn,n_candidates,chosen_rank";
         for (int i = 1; i <= kMaxFeatureDim; ++i)
         {
             m_decisionsFile << ",x" << i;
@@ -512,7 +512,7 @@ MetricsCollector::WriteDecisionLine(uint32_t node,
         return;
     }
     static const char* names[] = {"ACK", "ACK_TIMEOUT", "BITMAP", "EXPIRY", "VOID"};
-    m_decisionsFile << NowS() - delayS << ',' << node << ',' << fwd << ',' << hopSeq << ',' << int(d.powerLevel) << ','
+    m_decisionsFile << NowS() - delayS << ',' << node << ',' << fwd << ',' << d.fwdCell << ',' << hopSeq << ',' << int(d.powerLevel) << ','
                     << int(attempt) << ',' << ar << ',' << learn << ',' << int(d.numCandidates) << ','
                     << int(d.chosenRank);
     for (int i = 0; i < kMaxFeatureDim; ++i)

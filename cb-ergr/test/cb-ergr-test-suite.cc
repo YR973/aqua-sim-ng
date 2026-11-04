@@ -1975,6 +1975,262 @@ class FittedLogisticUsesItsOfflineWeights : public TestCase
     }
 };
 
+
+// ============================================================ D7 ===========
+
+// Spec test 14 (§14) with the K§2.3 rules: a planned handover passes (theta, A) unscaled; an unplanned takeover
+// (the old head died) starts from the last shared blob with A scaled by BetaHandover = 0.7.
+class HandoverGivesTheNewHeadTheOldModel : public TestCase
+{
+  public:
+    HandoverGivesTheNewHeadTheOldModel()
+        : TestCase("D7 test14: planned handover and unplanned takeover reproduce the old head's model")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorCbV5> oldHead = MakeCbSelector("EnableLifetime=false", 1, 5);
+        AcousticLinkModel link;
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry good = MakeNeighbour(11, link.SnrReqDb(ctx.dataBytes) + 12.0);
+        NeighbourEntry bad = MakeNeighbour(12, link.SnrReqDb(ctx.dataBytes) - 6.0);
+        std::vector<Candidate> eligible = {{11, &good}, {12, &bad}};
+        std::mt19937 gen(5);
+        std::uniform_real_distribution<double> coin(0.0, 1.0);
+        for (int n = 0; n < 120; ++n)
+        {
+            Time now = Seconds(1000 + 3.0 * n);
+            Decision d = oldHead->Select(ctx, eligible, now);
+            oldHead->OnSent(d, now);
+            oldHead->OnLabel(d, coin(gen) < (d.fwdId == 11 ? 0.9 : 0.2) ? 1 : 0, LabelSource::Ack, now);
+        }
+        const Time tEnd = Seconds(1000 + 3.0 * 120);
+
+        // ---- planned handover: header round trip, then the successor becomes head.
+        ErgrHandoverHeader out;
+        out.fromId = 1;
+        out.toId = 2;
+        out.cellId = 5;
+        NS_TEST_ASSERT_MSG_EQ(oldHead->OnHandoverOut(out, tEnd), true, "there is a model to hand over");
+        Ptr<Packet> wire = Create<Packet>(0);
+        wire->AddHeader(out);
+        NS_TEST_ASSERT_MSG_EQ(wire->GetSize(), 115u, "handover frame is 115 B");
+        NS_TEST_ASSERT_MSG_EQ(PeekFrameType(wire), static_cast<uint8_t>(FrameType::Handover), "type byte");
+        ErgrHandoverHeader in;
+        wire->RemoveHeader(in);
+
+        Ptr<SelectorCbV5> successor = MakeCbSelector("EnableLifetime=false", 2, 5);
+        successor->OnHandoverIn(in, tEnd);
+        successor->OnRoleChange(true, tEnd);
+        const auto& oldModel = oldHead->Model();
+        const auto& newModel = successor->Model();
+        for (int i = 0; i < 9; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ_TOL(newModel.Theta()[i], oldModel.Theta()[i], 1.0 / 1024.0, "theta_" << i << " within quantisation");
+            NS_TEST_ASSERT_MSG_EQ_TOL(newModel.OwnPrecision().At(i, i), oldModel.OwnPrecision().At(i, i), 1.0 / 16.0,
+                                      "A_" << i << i << " within quantisation");
+        }
+        NS_TEST_ASSERT_MSG_EQ_TOL(newModel.TraceOwn(), oldModel.TraceOwn(), 9.0 / 16.0, "planned handover is unscaled");
+
+        // ---- unplanned takeover: the old head only ever sent blobs on beacons; it then dies.
+        ErgrBeaconHeader blobBeacon;
+        blobBeacon.nodeId = 1;
+        blobBeacon.cellId = 5;
+        oldHead->OnBeaconTx(blobBeacon, tEnd);
+        NS_TEST_ASSERT_MSG_EQ(blobBeacon.hasBlob, true, "the old head had shared a blob");
+        Ptr<SelectorCbV5> taker = MakeCbSelector("EnableLifetime=false", 3, 5);
+        taker->OnBeaconRx(blobBeacon, tEnd);
+        taker->OnRoleChange(true, tEnd + Seconds(60));
+        double evidence = 0.0;
+        for (int i = 0; i < 9; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ_TOL(taker->Model().Theta()[i], oldModel.Theta()[i], 1.0 / 1024.0,
+                                      "unplanned: theta_" << i << " within quantisation");
+            evidence += oldModel.OwnEvidenceDiag()[i];
+        }
+        NS_TEST_ASSERT_MSG_EQ_TOL(taker->Model().TraceOwn(), 0.7 * (9.0 + evidence), 9.0 * 0.7 / 16.0 + 0.2,
+                                  "unplanned: A scaled by BetaHandover = 0.7");
+        NS_TEST_ASSERT_MSG_EQ((taker->Model().TraceOwn() < newModel.TraceOwn()), true, "less confident than after a planned handover");
+
+        // A node with no model to hand over sends nothing.
+        Ptr<SelectorCbV5> fresh = MakeCbSelector("EnableLifetime=false", 4, 5);
+        ErgrHandoverHeader nothing;
+        NS_TEST_ASSERT_MSG_EQ(fresh->OnHandoverOut(nothing, tEnd), false, "nothing learned: no handover");
+    }
+};
+
+// Four static nodes: sink (0), two relays (1, 2) at the same depth, source (3). Both relays are heads.
+struct TwoRelayNetwork
+{
+    Ptr<MetricsCollector> metrics = CreateObject<MetricsCollector>();
+    Ptr<CbErgrPropagation> propagation;
+    std::vector<Ptr<ErgrEmhcRouting>> routing;
+
+    TwoRelayNetwork(const std::string& outDir)
+    {
+        MetricsCollector::Config mc;
+        mc.outDir = outDir;
+        mc.simTimeS = 1.0e9;
+        mc.logDecisions = true;
+        metrics->Configure(mc);
+        NodeContainer nodes;
+        nodes.Create(4);
+        Ptr<AquaSimChannel> channel = CbErgrHelper::CreateChannel(propagation, 0.0, 120.0);
+        propagation->AssignStreams(10);
+        CbErgrHelper::ConnectLinkTrace(propagation, metrics);
+        AquaSimHelper asHelper = AquaSimHelper::Default();
+        asHelper.SetChannel(channel);
+        asHelper.SetMac("ns3::AquaSimBroadcastMac");
+        asHelper.SetRouting("ns3::cbergr::ErgrEmhcRouting");
+        CbErgrHelper::ConfigureHelper(asHelper, 0.1, 1e9, 2.0, 0.75, 0.008);
+        const Vector positions[4] = {Vector(1100, 1100, 100), Vector(900, 1100, 1500), Vector(1300, 1100, 1500),
+                                     Vector(1100, 1100, 2300)};
+        for (int i = 0; i < 4; ++i)
+        {
+            Ptr<MobilityModel> mobility = CreateObject<ConstantPositionMobilityModel>();
+            nodes.Get(i)->AggregateObject(mobility);
+            mobility->SetPosition(positions[i]);
+            Ptr<AquaSimNetDevice> device = CreateObject<AquaSimNetDevice>();
+            asHelper.Create(nodes.Get(i), device);
+            CbErgrHelper::ConfigureDevice(device, 5000.0);
+            device->GetMac()->AssignStreams(20 + i);
+            Ptr<ErgrEmhcRouting> r = DynamicCast<ErgrEmhcRouting>(device->GetRouting());
+            r->SetAttribute("AutoElection", BooleanValue(false));
+            r->SetAttribute("PktRatePerNodeHz", DoubleValue(0.0));
+            r->AssignStreams(30 + 2 * i);
+            r->SetNodeRole(i == 0);
+            r->SetMetrics(metrics);
+            ObjectFactory factory;
+            factory.SetTypeId("ns3::cbergr::SelectorRoundRobin");
+            factory.Set("WithFeedback", BooleanValue(true));
+            r->SetSelector(factory.Create<ForwarderSelector>());
+            metrics->RegisterNode(i, i == 0, device->GetPhy()->EM());
+            routing.push_back(r);
+        }
+        for (auto& r : routing)
+        {
+            r->Start();
+        }
+        routing[1]->ForceRole(1);
+        routing[2]->ForceRole(1);
+        routing[3]->ForceRole(1); // the source is a head too (a member would hand over to a head of its own cell)
+    }
+};
+
+// D§3 P4 suspect tier: after two ACK timeouts in a row the dead relay is skipped for a beacon interval,
+// so the source stops wasting attempts on it and uses the other relay.
+class DeadRelayIsSuspectedAndAvoided : public TestCase
+{
+  public:
+    DeadRelayIsSuspectedAndAvoided()
+        : TestCase("D7: two ACK timeouts make a dead forwarder suspect and traffic moves to the other relay")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-suspect";
+        RngSeedManager::SetSeed(9);
+        TwoRelayNetwork net(dir);
+        for (int k = 0; k < 40; ++k)
+        {
+            Simulator::Schedule(Seconds(200.0 + 6.0 * k), &ErgrEmhcRouting::InjectPacket, net.routing[3]);
+        }
+        const double killAt = 260.0;
+        Simulator::Schedule(Seconds(killAt), &ErgrEmhcRouting::Kill, net.routing[1]);
+        Simulator::Schedule(Seconds(900.0), &MetricsCollector::Finalize, net.metrics);
+        Simulator::Stop(Seconds(900.001));
+        Simulator::Run();
+        Simulator::Destroy();
+
+        std::vector<CsvRow> events = ReadCsv(dir + "/events.csv");
+        int suspects = 0;
+        for (const CsvRow& e : events)
+        {
+            suspects += (e.at("event") == "HEAD_SUSPECT" && e.at("details") == "fwd=1");
+        }
+        NS_TEST_ASSERT_MSG_EQ((suspects >= 1), true, "the dead relay was suspected");
+
+        // Attempts from the source to the dead relay in the 40 s after it died (excluding what was in flight).
+        std::vector<CsvRow> decisions = ReadCsv(dir + "/decisions.csv");
+        int toDeadSoon = 0, toLiveSoon = 0;
+        for (const CsvRow& r : decisions)
+        {
+            double t = std::stod(r.at("time_s"));
+            if (r.at("node") == "3" && t > killAt + 2.0 && t < killAt + 40.0)
+            {
+                (r.at("fwd") == "1" ? toDeadSoon : toLiveSoon)++;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ((toDeadSoon <= 3), true, "at most a few attempts to the dead relay (" << toDeadSoon << ")");
+        NS_TEST_ASSERT_MSG_EQ((toLiveSoon >= 3), true, "traffic goes to the live relay (" << toLiveSoon << ")");
+        NS_TEST_ASSERT_MSG_EQ((net.metrics->PacketsDelivered() > 20), true, "most packets still arrive");
+        std::filesystem::remove_all(dir);
+    }
+};
+
+// Failure injection in a full scenario: killed heads are replaced by an election.
+class KilledHeadsAreReplacedByElections : public TestCase
+{
+  public:
+    KilledHeadsAreReplacedByElections()
+        : TestCase("D7: failure injection kills heads in several cells and the cells elect new ones")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-kill";
+        ScenarioSettings settings;
+        settings.outDir = dir;
+        settings.seed = 4;
+        settings.numNodes = 60;
+        settings.cellSizeM = 1500.0; // 8 big cells with several nodes each
+        settings.simTimeS = 1500;
+        settings.warmupS = 300;
+        settings.pktRateHz = 0.004;
+        settings.currentSpeed = 0.0; // static, so cells keep their nodes
+        settings.killHeadsAtS = 800;
+        settings.killHeadsCells = 3;
+        ScenarioConfig config;
+        RegisterSettings(config, settings);
+        RunScenario(settings, config);
+
+        std::vector<CsvRow> events = ReadCsv(dir + "/events.csv");
+        std::set<std::string> killedCells;
+        for (const CsvRow& e : events)
+        {
+            if (e.at("event") == "NODE_KILLED")
+            {
+                NS_TEST_ASSERT_MSG_EQ((std::stod(e.at("time_s")) >= 800.0 - 1e-6), true, "killed at the chosen time");
+                size_t at = e.at("details").find("cell=");
+                std::string rest = e.at("details").substr(at + 5);
+                killedCells.insert(rest.substr(0, rest.find(' ')));   // details look like "cell=2 head=1"
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(killedCells.size(), 3u, "three cells lost a head");
+        // Every such cell elects a head again after the failure.
+        for (const std::string& cell : killedCells)
+        {
+            bool replaced = false;
+            for (const CsvRow& e : events)
+            {
+                if (e.at("event") == "HEAD_ELECTED" && std::stod(e.at("time_s")) > 800.0 &&
+                    e.at("details").find("cell=" + cell + " ") != std::string::npos)
+                {
+                    replaced = true;
+                }
+            }
+            NS_TEST_ASSERT_MSG_EQ(replaced, true, "cell " << cell << " elected a new head");
+        }
+        std::filesystem::remove_all(dir);
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -2020,6 +2276,9 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new OracleSuccessMatchesTheLinkModel, TestCase::QUICK);
         AddTestCase(new OracleSelectorPicksTheTrulyBestHop, TestCase::QUICK);
         AddTestCase(new FittedLogisticUsesItsOfflineWeights, TestCase::QUICK);
+        AddTestCase(new HandoverGivesTheNewHeadTheOldModel, TestCase::QUICK);
+        AddTestCase(new DeadRelayIsSuspectedAndAvoided, TestCase::QUICK);
+        AddTestCase(new KilledHeadsAreReplacedByElections, TestCase::QUICK);
     }
 };
 

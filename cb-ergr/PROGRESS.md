@@ -2,7 +2,7 @@
 
 ## Environment
 - Workspace: `/home/user/ws/ns-3-dev` (ns-3.41, official git tag; the tarball is blocked here). `src/aqua-sim-ng` -> this repo, `contrib/cb-ergr` -> `cb-ergr/`. `cb-ergr/scripts/setup_ns3.sh` recreates it.
-- Build: `cd ns-3-dev && cmake --build cmake-cache -j4` (or `./ns3 build`). Tests: `./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose` (39 cases, all pass).
+- Build: `cd ns-3-dev && cmake --build cmake-cache -j4` (or `./ns3 build`). Tests: `./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose` (42 cases, all pass).
 - Run: `./build/contrib/cb-ergr/ns3.41-cb-ergr-scenario-debug --ConfigFile=... --OutDir=...` (see CODE-GUIDE §5).
 - Missing inputs: the pilot `cb_ergr_pilot.py` was never supplied (link model and current field are from the spec formulas / a stand-in, CONFIRM E8, E10). The design doc v5.2 was given only as chat text; it is not in `docs/` yet.
 - The four upstream files we patch use CRLF line endings; edit them with a script that preserves them.
@@ -21,6 +21,8 @@
 
 - D6b oracles, regret, A1. Held-out training seeds 108-110: O 0.641, FW 0.584, A1 0.563, CB 0.534, RR+FB 0.475 PDR; regret 0, 0.069, 0.081, 0.146, 0.190. A static rule on the features beats the online learner at this scale and horizon.
 
+- D7a failure handling: suspect tier, HANDOVER frames and planned/unplanned takeover, failure injection (`--KillHeadsAtS=8000 --KillHeadsCells=5`), spec test 14 and two integration tests. Recovery-time analysis still to write (`analyse.py`).
+
 ## Calibration findings (D3 deliverable; RoundRobin, seed 1, training-style runs, no tuning)
 | Run | PDR | Rx share of energy | First node dead | Half nodes dead |
 |---|---|---|---|---|
@@ -34,8 +36,11 @@
 - **Spec test 16 (PDR falls as speed rises) is NOT reproduced**: PDR is flat in speed (0.272, 0.287, 0.294, 0.294 for U = 0, 0.5, 1, 2). Mobility does raise elections/hour (116 -> 486), shorten head tenure (1242 s -> 350 s) and raise voids (7 -> 24). Not tuned. Needs the published reference numbers (CONFIRM E15, C3).
 - Speed: N=250 takes ~35 s of wall time per 2000 s in the debug build (about 6 min for 20000 s); N=100 takes ~7 s per 1000 s.
 
-## Next (D6, then D7; both optional by the kickoff)
-D6: baselines FW (fixed weights) and QL (QELAR-style Q-learning, AckMode Every) behind the same interface, also CARP and LinQ if time; failure detection (suspect after 2 ACK timeouts, dead by overdue beacon + quorum of 2); `run_sweep.py` (YAML, parallel, skips existing) and `analyse.py` (mean +- 95% CI, ablation table). D7: planned handover and failure injection (test 14), N-A header-first receive and N-C lean beacons (**needed**: Rx is 90% of energy), power patch and the two-node power test (tests 11).
+## Next
+1. `run_sweep.py` (YAML or JSON list -> parallel runs, skips existing outputs) and `analyse.py` (mean +- 95% CI over seeds, ablation table, recovery time from `events.csv` + `decisions.csv`).
+2. N-A header-first receive and N-C lean beacons (flags `HeaderFirstRx`, `LeanBeacons`): **needed**, Rx is ~90% of energy and nodes die in 11-21 min at 300 J.
+3. Power patch (TxPowerLevelTag) and the two-node power test (spec test 11); then `EnablePower` becomes a real ablation.
+4. Optional: CB warm start from the A1 weights (design P7), because static rules beat the cold-start learner over 2500 s.
 Run the 20-seed comparisons only on the test seeds 1-20 and only after the settings are frozen on training seeds 101-110.
 
 ## Open
