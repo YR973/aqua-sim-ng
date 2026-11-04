@@ -14,7 +14,7 @@ reason.
 
 | # | Item | Default used | Attribute | Used in | Status |
 |---|---|---|---|---|---|
-| A1 | Cell edge length | R/√3 ≈ 866 m (R = 1500 m). **Note:** for two points in *face*-adjacent cubes the worst-case distance is √(2²+1+1)·a = √6·a, which equals R when a = R/√6 ≈ 612 m. If edge- and corner-adjacent cells also count as neighbours (26-neighbourhood), the worst case is √12·a, so a = R/(2√3) ≈ 433 m. The value a = R/√3 only guarantees range within the *same* cell (cell diagonal √3·a = R), not to adjacent cells. Needs a decision: cell size, and 6- vs 26-neighbourhood. | `CellSizeM` | — | open |
+| A1 | Cell edge length (**ERGR-EMHC-g now 750 m per kickoff §2.1 / D§3 P1; the note below applies to P0 only**) | R/√3 ≈ 866 m (R = 1500 m). **Note:** for two points in *face*-adjacent cubes the worst-case distance is √(2²+1+1)·a = √6·a, which equals R when a = R/√6 ≈ 612 m. If edge- and corner-adjacent cells also count as neighbours (26-neighbourhood), the worst case is √12·a, so a = R/(2√3) ≈ 433 m. The value a = R/√3 only guarantees range within the *same* cell (cell diagonal √3·a = R), not to adjacent cells. Needs a decision: cell size, and 6- vs 26-neighbourhood. | `CellSizeM` | — | open |
 | A2 | Head-election criterion | Highest residual energy, then closest to the cell centre, then lowest id | `ElectionCriterion` | — | open |
 | A3 | Election triggers and messages | Head leaves its cell, head dies, or head energy < `HeadEnergyThreshold` | `HeadEnergyThreshold` | — | open |
 | A4 | Hmin dissemination | Sinks advertise Hmin = 0; each node sets Hmin = 1 + min Hmin over G1 heads heard; carried in beacons | — | — | open |
@@ -63,3 +63,14 @@ explicitly.
 | D3 | Effective preamble | Verified: constructor sets `m_preamble = 1.5`, then Attribute `Preamble` (default 0) overwrites it at construction, so the effective preamble is 0. `CalcTxTime` uses `Time::FromInteger(Preamble(), Time::S)`, which truncates. | None — patch §4.1 planned for M1. |
 | D4 | Default modulation bit rate | `AquaSimModulation` default is SPS = 10000, CodingEff = 1 → 10 kbit/s. The spec uses `BitRate` = 5000 bit/s. | None — the scenario will set SPS/CodingEff explicitly. |
 | D5 | ns-3 version | Built against ns-3.41 from the official `ns-3.41` git tag (the `ns-allinone-3.41.tar.bz2` download is blocked in this environment; the source tree is the same). | None. |
+
+## E. Added 2026-11-04 (kickoff + design v5.2)
+
+| # | Item | Default used | Attribute | Used in | Status |
+|---|---|---|---|---|---|
+| E1 | ERGR-EMHC-g cell side | 750 m (4^3 cells); 600 m sweep | `CellSizeM` | params::grid | decided by kickoff; P0 value still A1 |
+| E2 | Heads per cell, neighbour set | k = 2; 26 adjacent cells, `FaceOnly` false | `HeadsPerCell`, `FaceOnly` | params::grid | decided by kickoff |
+| E3 | Election weight beta, periodic election | beta = 0.9, 400 s | `ElectionBeta`, `ElectionPeriodS` | params::election | open (Q2) |
+| E4 | Forgetting clock | decision time, not label arrival | — | `CbLearnerModel::BeginDecision` | decided (K§2.3) |
+| E5 | What sharing sends | diag of own evidence (A_own - lambda0 I) on beacons; full A only on planned handover | — | `CbLearnerModel` | assumption: spec §6.3 blob has diag only |
+| E6 | Whether Aqua-Sim charges Rx for sub-threshold or colliding frames | to read in D2 | — | — | open |

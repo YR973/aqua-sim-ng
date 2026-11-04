@@ -6,6 +6,12 @@ build_lib(
         model/cb-ergr-config.cc
     HEADER_FILES
         model/cb-ergr-config.h
+        model/cb-ergr-params.h
+        model/small-matrix.h
+        model/serial-number.h
+        model/receipt-window.h
+        model/energy-price.h
+        model/cb-learner-model.h
     LIBRARIES_TO_LINK
         ${libaqua-sim-ng}
         ${libmobility}
