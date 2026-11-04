@@ -43,10 +43,10 @@
 - Speed: N=250 takes ~35 s of wall time per 2000 s in the debug build (about 6 min for 20000 s); N=100 takes ~7 s per 1000 s.
 
 ## Next
-1. **Needs the supervisor first** (CONFIRM): E0 / load / Rx charging (E13, Q4), P0 cell size and election (A1-A3, Q1-Q2), published numbers for spec test 16 (E15), FW weight policy (E22), the pilot file (D1/E8/E10).
-2. Full-size runs once settings are frozen on training seeds 101-110: N=250, 20000 s, 20 test seeds 1-20 with `run_sweep.py` + `analyse.py` (use an optimized build: `./ns3 configure --build-profile=optimized`).
-3. Not built: N-B (members sleep), N-D early receipt, start-up wave metrics (P6), design-P7 prior precision, optional 10th feature (onward), `Link=Linear`.
-4. Findings to take to the supervisor: static rule on CB's features (FW/A1) is about as good as the online learner at this scale (CONFIRM E22); gate and sharing show no effect yet (E21); power arm halves PDR (CHANGELOG D7c); energy is Rx-dominated (E13).
+1. **Needs the supervisor** (CONFIRM): E31 (the N = 250 benchmark is collision-limited: oracle hop success 0.25 even with ideal links; options: carrier-sense MAC, lower load, or keep), E30 (paper's MAC for test 16), E29 (P0 gaps), E32 (quorum parameters), E28 (E0 10000 J and 0.004 pkt/s as [CONFIRM] for -g), E10 (mobility field stand-in).
+2. Done since the last note: P0 (published protocol) and spec test 16 trend (PDR falls with speed, as in the paper's Fig. 22); FW tuned on equal budget with CB (tuning does not help FW out of sample; FW still >= CB by 0.03 PDR at 2000 and 10000 s); ACK energy about 5% of energy per delivered packet; warm-started CB (FW weights help early only; neighbour prior no effect); speed 0 vs 1 and head failures (no measurable failure effect with 10 cells; 40 cells raises PDR for everyone because it removes contention); quorum dead-head detection (faster by 30-50 s but 2-5x more false declarations: off by default).
+3. Full-size runs once the supervisor has answered E31: N = 250, 20000 s, 20 test seeds 1-20 with `run_sweep.py` + `analyse.py` (release binary: `cmake --build cmake-cache-opt --target cb-ergr-scenario`, binary `build/contrib/cb-ergr/ns3.41-cb-ergr-scenario`).
+4. Not built: N-B (members sleep), N-D early receipt, start-up wave metrics (P6), design-P7 prior precision, optional 10th feature (onward), `Link=Linear`, learners on P0.
 
 ## How to check everything (end-of-session checklist)
 ```
