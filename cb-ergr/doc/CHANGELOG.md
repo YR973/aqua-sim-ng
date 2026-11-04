@@ -2,6 +2,24 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-06 10:00 — D7c per-packet transmit power (patch P8, spec test 11) and the power ablation
+- What: `TxPowerLevelTag` (cb-ergr), PHY patch P8 (`SetTxPowerHook`), `CbErgrHelper::EnablePowerLevels`, the channel reads the tag to set the frame's source level (`SL_full + offset[level]`), routing tags DATA frames sent below full power, `InjectRawFrame` test hook; test 11 (46 cases pass).
+- Why: kickoff §2.3 / §4 D7 and spec §4.2. The gate passes, so `EnablePower` is a meaningful ablation.
+- Effect on results: only when `EnablePower=true` (default false).
+- Spec/design deviation:
+  1. The power tag is read by the channel, not by the PHY stamp: the upstream PHY has no per-frame level, so the source level goes through the channel subclass and only the energy charge needs the PHY hook (P8). Untagged frames (beacons, ACKs, control) use the full level.
+  2. **Test 11 asserts non-decreasing success at 1400 m, and strict monotonicity at 1250 m.** At 1400 m the -3 dB and -6 dB levels have success exactly 0 (BFSK error cliff: PER goes from 0.15 to about 1), so "strictly increasing" cannot hold there; the spec's intent (power matters, in the right direction) is checked at 1250 m where the three levels give about 0 / 0.1 / 0.99. Energy per transmission matches `P_tx[level] x airtime` within 1% and the success rates match the link model within 3.5 points at 500, 1000, 1250 and 1400 m.
+- Result (training seeds 101-103, N = 100, 2500 s; `results/reference/d5-smoke/compare_power_rate*.csv`):
+  | rate | method | PDR | Tx energy (J) |
+  |---|---|---|---|
+  | 0.004 | CB (full power) | 0.521 | 3709 |
+  | 0.004 | CB + power + lifetime price | 0.249 | 2211 |
+  | 0.004 | CB + power, no price | 0.410 | 3023 |
+  | 0.02 | CB (full power) | 0.182 | 9978 |
+  | 0.02 | CB + power + lifetime price | 0.111 | 4798 |
+  | 0.02 | CB + power, no price | 0.153 | 7205 |
+  The power arm lowers Tx energy by 40-50% but lowers PDR by half. Reasons: three times as many arms to learn from the same few labels, and a steep error cliff, so a level that is one step too low fails outright and costs a retransmission. Receiving is ~90% of all energy, so the total energy saving is small. Reported as is; the main results are therefore forwarder-only (as K§2.3 intends).
+
 ## 2026-11-06 06:00 — D7b energy: N-A header-first receive and N-C lean beacons
 - What: PHY patch P7 (`SetRxEnergyTimeHook`: optional per-frame receive-energy duration; no hook = upstream); `CbErgrHelper::EnableHeaderFirstRx/HeaderFirstChargeS`; routing flags `LeanBeacons`, `TrickleMaxFactor`, `PreElectionLeadS`; per-row neighbour expiry that honours the advertised beacon interval; scenario settings `HeaderFirstRx`, `LeanBeacons`, `TrickleMaxFactor`. 3 new tests (45 cases pass).
 - Why: kickoff §2.2 (implement behind flags) and design D§4.1-4.2: calibration showed Rx is ~90% of the energy (CONFIRM E13), which makes both "must".

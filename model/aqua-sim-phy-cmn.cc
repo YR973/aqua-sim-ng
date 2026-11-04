@@ -584,6 +584,13 @@ AquaSimPhyCmn::PktTransmit(Ptr<Packet> p, int channelId) {
 
   switch (GetNetDevice()->GetTransmissionStatus()){
   case SEND:
+    // CB-ERGR patch P8: the electrical power of this frame (e.g. a reduced power level) for the energy charge.
+    if (m_txPowerHook)
+    {
+      double txPowerW = m_txPowerHook(p);
+      if (txPowerW > 0.0 && EM() != nullptr)
+        EM()->SetTxPower(txPowerW);
+    }
     UpdateTxEnergy(asHeader.GetTxTime());
     break;
   case NIDLE:

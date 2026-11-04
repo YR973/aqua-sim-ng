@@ -129,6 +129,12 @@ public:
    */
   void SetRxEnergyTimeHook(std::function<double(Ptr<const Packet>)> hook) { m_rxEnergyTimeHook = hook; }
 
+  /**
+   * CB-ERGR patch P8 (per-frame transmit power, spec 4.2). If set, the hook returns the electrical transmit power
+   * (W) to charge for an outgoing frame; a value <= 0 keeps the energy model's TxPower. Default: no hook.
+   */
+  void SetTxPowerHook(std::function<double(Ptr<const Packet>)> hook) { m_txPowerHook = hook; }
+
 protected:
   virtual Ptr<Packet> PrevalidateIncomingPkt(Ptr<Packet> p);
   virtual void UpdateTxEnergy(Time txTime);
@@ -211,6 +217,7 @@ private:
   bool m_exactPreamble = false;        // P1: do not truncate Preamble to whole seconds
   bool m_rxEnergyUsesAirtime = false;  // P2: charge Rx energy for the frame airtime, not the propagation delay
   bool m_keepEnergyTxPower = false;    // P3: do not overwrite the energy model's TxPower with the acoustic Pt
+  std::function<double(Ptr<const Packet>)> m_txPowerHook;        // P8: optional per-frame electrical transmit power
   std::function<double(Ptr<const Packet>)> m_rxEnergyTimeHook;   // P7: optional per-frame receive-energy duration
   bool m_enforceHalfDuplex = false;    // P5: a frame arriving while this node transmits is lost
 

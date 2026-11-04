@@ -14,6 +14,7 @@
 #include "ns3/mobility-module.h"
 #include "ns3/oracle-evaluator.h"
 #include "ns3/selector-carp-ewma.h"
+#include "ns3/tx-power-level-tag.h"
 #include "ns3/selector-cb-v5.h"
 #include "ns3/selector-fixed-weight.h"
 #include "ns3/selector-lfa-q.h"
@@ -2374,6 +2375,146 @@ class LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking : public TestCase
     }
 };
 
+
+// ============================================================ D7 power =====
+
+// Spec test 11 (§4.2, the gate for the power arm): two static nodes; per distance and power level, 2000 frames.
+// Success must rise with the power level at 1400 m, match the link model, and the energy per transmission must
+// equal P_tx[level] x airtime within 1%.
+class PowerLevelsChangeSuccessAndEnergy : public TestCase
+{
+  public:
+    PowerLevelsChangeSuccessAndEnergy()
+        : TestCase("D7 test11: two nodes, 3 power levels, success monotone and energy = P_tx x airtime")
+    {
+    }
+
+  private:
+    static uint32_t s_received[3];
+    static void OnPhyRx(Ptr<Packet> packet, double noise)
+    {
+        // The block (= power level) is identified by the time the frame arrives.
+        int block = static_cast<int>((Simulator::Now().GetSeconds() - 10.0) / 6100.0);
+        if (block >= 0 && block < 3)
+        {
+            s_received[block]++;
+        }
+    }
+
+    void DoRun() override
+    {
+        const double distances[4] = {500.0, 1000.0, 1250.0, 1400.0};
+        const int framesPerLevel = 2000;
+        double successAt1250[3] = {0, 0, 0};
+        double successAt1400[3] = {0, 0, 0};
+        AcousticLinkModel link;
+
+        for (double distanceM : distances)
+        {
+            std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-power";
+            RngSeedManager::SetSeed(31);
+            Ptr<MetricsCollector> metrics = CreateObject<MetricsCollector>();
+            MetricsCollector::Config mc;
+            mc.outDir = dir;
+            mc.simTimeS = 1.0e9;
+            metrics->Configure(mc);
+            NodeContainer nodes;
+            nodes.Create(2);
+            Ptr<CbErgrPropagation> propagation;
+            Ptr<AquaSimChannel> channel = CbErgrHelper::CreateChannel(propagation, 0.0, 120.0); // no shadowing
+            propagation->AssignStreams(10);
+            AquaSimHelper asHelper = AquaSimHelper::Default();
+            asHelper.SetChannel(channel);
+            asHelper.SetMac("ns3::AquaSimBroadcastMac");
+            asHelper.SetRouting("ns3::cbergr::ErgrEmhcRouting");
+            CbErgrHelper::ConfigureHelper(asHelper, 0.1, 1e12, 2.0, 0.75, 0.008);
+            Ptr<AquaSimNetDevice> devices[2];
+            Ptr<ErgrEmhcRouting> routing[2];
+            for (int i = 0; i < 2; ++i)
+            {
+                Ptr<MobilityModel> mobility = CreateObject<ConstantPositionMobilityModel>();
+                nodes.Get(i)->AggregateObject(mobility);
+                mobility->SetPosition(Vector(i == 0 ? 0.0 : distanceM, 0, 0));
+                devices[i] = CreateObject<AquaSimNetDevice>();
+                asHelper.Create(nodes.Get(i), devices[i]);
+                CbErgrHelper::ConfigureDevice(devices[i], 5000.0);
+                CbErgrHelper::EnablePowerLevels(devices[i], 2.0);
+                devices[i]->GetMac()->AssignStreams(20 + i);
+                routing[i] = DynamicCast<ErgrEmhcRouting>(devices[i]->GetRouting());
+                routing[i]->SetAttribute("AutoElection", BooleanValue(false));
+                routing[i]->SetAttribute("PktRatePerNodeHz", DoubleValue(0.0));
+                routing[i]->SetAttribute("BeaconPeriodS", DoubleValue(1.0e7)); // no beacons: only the test frames
+                routing[i]->AssignStreams(30 + 2 * i);
+                routing[i]->SetNodeRole(false);
+                routing[i]->SetMetrics(metrics);
+                ObjectFactory factory;
+                factory.SetTypeId("ns3::cbergr::SelectorRoundRobin");
+                routing[i]->SetSelector(factory.Create<ForwarderSelector>());
+                metrics->RegisterNode(i, false, devices[i]->GetPhy()->EM());
+            }
+            devices[1]->GetPhy()->TraceConnectWithoutContext("Rx", MakeCallback(&OnPhyRx));
+            for (int i = 0; i < 2; ++i)
+            {
+                routing[i]->Start();
+            }
+            std::fill(s_received, s_received + 3, 0u);
+
+            double txEnergyAtBlockStart[3] = {0, 0, 0}, txEnergyAtBlockEnd[3] = {0, 0, 0};
+            Ptr<AquaSimEnergyModel> txEnergy = devices[0]->GetPhy()->EM();
+            for (int level = 0; level < 3; ++level)
+            {
+                const double blockStart = 10.0 + level * 6100.0;
+                for (int k = 0; k < framesPerLevel; ++k)
+                {
+                    Simulator::Schedule(Seconds(blockStart + 3.0 * k), &ErgrEmhcRouting::InjectRawFrame, routing[0],
+                                        static_cast<uint16_t>(1), static_cast<uint8_t>(level));
+                }
+                Simulator::Schedule(Seconds(blockStart - 1.0), [&txEnergyAtBlockStart, txEnergy, level]() {
+                    txEnergyAtBlockStart[level] = txEnergy->GetTxEnergyJ();
+                });
+                Simulator::Schedule(Seconds(blockStart + 6050.0), [&txEnergyAtBlockEnd, txEnergy, level]() {
+                    txEnergyAtBlockEnd[level] = txEnergy->GetTxEnergyJ();
+                });
+            }
+            Simulator::Stop(Seconds(10.0 + 3 * 6100.0));
+            Simulator::Run();
+
+            Ptr<AquaSimPhyCmn> phy = DynamicCast<AquaSimPhyCmn>(devices[0]->GetPhy());
+            const double airtimeS = phy->CalcTxTime(17 + 150).GetSeconds();
+            for (int level = 0; level < 3; ++level)
+            {
+                const double success = static_cast<double>(s_received[level]) / framesPerLevel;
+                const double expectedPower = 2.0 * params::phy::kTxPowerLevelScale[level];
+                const double energyPerTx = (txEnergyAtBlockEnd[level] - txEnergyAtBlockStart[level]) / framesPerLevel;
+                NS_TEST_ASSERT_MSG_EQ_TOL(energyPerTx, expectedPower * airtimeS, 0.01 * expectedPower * airtimeS,
+                                          "energy per transmission, level " << level << " at " << distanceM << " m");
+                const double sl = link.FullSourceLevelDb() + params::phy::kSourceLevelOffsetDb[level];
+                const double analytic = 1.0 - link.PerFromSnr(link.SnrDb(sl, distanceM, 0.0), 167);
+                NS_TEST_ASSERT_MSG_EQ_TOL(success, analytic, 0.035, "success vs link model, level " << level << " at " << distanceM << " m");
+                if (distanceM == 1250.0)
+                {
+                    successAt1250[level] = success;
+                }
+                if (distanceM == 1400.0)
+                {
+                    successAt1400[level] = success;
+                }
+            }
+            Simulator::Destroy();
+            std::filesystem::remove_all(dir);
+        }
+        // At 1400 m the -3 dB and -6 dB levels fall off the BFSK cliff (success 0), so the order is non-decreasing there;
+        // at 1250 m all three levels differ.
+        NS_TEST_ASSERT_MSG_EQ((successAt1400[0] <= successAt1400[1] && successAt1400[1] < successAt1400[2]), true,
+                              "success does not fall with power at 1400 m: " << successAt1400[0] << " <= "
+                                                                             << successAt1400[1] << " < " << successAt1400[2]);
+        NS_TEST_ASSERT_MSG_EQ((successAt1250[0] < successAt1250[1] && successAt1250[1] < successAt1250[2]), true,
+                              "success rises strictly with power at 1250 m: " << successAt1250[0] << " < " << successAt1250[1]
+                                                                              << " < " << successAt1250[2]);
+    }
+};
+uint32_t PowerLevelsChangeSuccessAndEnergy::s_received[3] = {0, 0, 0};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -2425,6 +2566,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new HeaderFirstReceiveChargesOnlyOverheardData, TestCase::QUICK);
         AddTestCase(new HeaderFirstReceiveSavesEnergyOnOverheardData, TestCase::QUICK);
         AddTestCase(new LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking, TestCase::QUICK);
+        AddTestCase(new PowerLevelsChangeSuccessAndEnergy, TestCase::QUICK);
     }
 };
 

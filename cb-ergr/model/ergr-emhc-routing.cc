@@ -7,6 +7,7 @@
 #include "ergr-emhc-routing.h"
 
 #include "cb-ergr-params.h"
+#include "tx-power-level-tag.h"
 
 #include "ns3/aqua-sim-phy-cmn.h"
 
@@ -259,6 +260,19 @@ ErgrEmhcRouting::Kill()
     details << "cell=" << m_cell << " head=" << m_isHead;
     m_metrics->OnEvent(m_id, "NODE_KILLED", details.str());
     GetNetDevice()->GetPhy()->EM()->SetEnergy(0.0);
+}
+
+void
+ErgrEmhcRouting::InjectRawFrame(uint16_t forwarderId, uint8_t powerLevel)
+{
+    ErgrDataHeader hdr;
+    hdr.senderId = m_id;
+    hdr.forwarderId = forwarderId;
+    hdr.hopSeq = NextHopSeq(forwarderId);
+    hdr.SetFlags(false, false, powerLevel);
+    Ptr<Packet> packet = Create<Packet>(m_payloadBytes);
+    packet->AddHeader(hdr);
+    TransmitFrame(packet, FrameType::Data, forwarderId, powerLevel);
 }
 
 void
@@ -1349,6 +1363,10 @@ ErgrEmhcRouting::TransmitFrame(Ptr<Packet> packet, FrameType type, int32_t recei
     ash.SetErrorFlag(false);
     ash.SetNumForwards(0);
     packet->AddHeader(ash);
+    if (powerLevel < params::phy::kNumPowerLevels - 1)
+    {
+        packet->AddPacketTag(TxPowerLevelTag(powerLevel)); // reduced power: read by the channel and the energy hook
+    }
     m_metrics->OnFrameTx(m_id, type, bytes, powerLevel, receiver);
     SendDown(packet, AquaSimAddress::GetBroadcast(), Seconds(0));
 }

@@ -19,6 +19,7 @@ All patches are guarded by a PHY Attribute that defaults to **false = upstream b
 | P3 | `model/aqua-sim-phy-cmn.cc` | `StampTxInfo` overwrote the energy model's TxPower with the **acoustic** Pt (`m_pT`, 0.2818 W) on every frame, so Tx energy was Pt x airtime. With `KeepEnergyTxPower` the configured electrical TxPower (2.0 W) is kept. | `KeepEnergyTxPower` | §4.3 | D2 |
 | P5 | `model/aqua-sim-phy-cmn.{h,cc}` | `PrevalidateIncomingPkt` had the check "receiver is transmitting" commented out ("DISABLE THIS FOR PURE MAC TESTS"), so a node could receive while sending. With `EnforceHalfDuplex` a frame that arrives while the node transmits is marked erroneous (it is lost but still costs Rx energy). | `EnforceHalfDuplex` | §4.4 | D3 |
 | P7 | `model/aqua-sim-phy-cmn.{h,cc}` | `SetRxEnergyTimeHook`: an optional function that returns, for a frame that arrived uncorrupted, how long receive energy is charged (negative = the whole frame). Used for header-first receive (N-A). No hook installed = upstream behaviour. | hook installed by the helper | D§4.2 | D7 |
+| P8 | `model/aqua-sim-phy-cmn.{h,cc}` | `SetTxPowerHook`: an optional function that returns the electrical transmit power (W) to charge for an outgoing frame (used for per-frame power levels). No hook = upstream behaviour. | hook installed by the helper | §4.2 | D7 |
 | P4 | `model/aqua-sim-energy-model.{h,cc}` | Bookkeeping only: joules drawn per state (`GetTxEnergyJ/GetRxEnergyJ/GetIdleEnergyJ`) and time the battery first reached 0 (`GetDeathTimeS`, -1 while alive; also set when `SetEnergy` is called with 0 or less, used by failure injection). `DecrEnergy` (used by `StatusShift`) is counted as Tx. | none (no behaviour change) | §4.3, K§2.2 | D2 |
 
 Not an upstream change: SNR-based reception is the new subclass `cbergr::CbErgrPropagation` (`model/cb-ergr-propagation.*`), selected by `AquaSimChannelHelper::SetPropagation`. It reports each frame's fate to the unchanged PHY through the received-power field (1 = decodable, 0 = below `RXThresh = 0.5`), so Aqua-Sim's own collision, half-duplex and energy logic still apply.
@@ -27,7 +28,6 @@ Planned:
 
 | # | File | Change | Guard | Spec |
 |---|---|---|---|---|
-| P6 | `model/aqua-sim-phy-cmn.{h,cc}` | `TxPowerLevelTag` read at transmit time: Pt, Tx energy and source level per frame (D7, optional per K§2.3) | tag present | §4.2 |
 
 ## 2. API names checked against the source (spec §0.3)
 

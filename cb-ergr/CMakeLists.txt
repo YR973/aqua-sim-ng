@@ -6,6 +6,7 @@ build_lib(
         model/cb-ergr-config.cc
         model/acoustic-link-model.cc
         model/gm-shadowing.cc
+        model/tx-power-level-tag.cc
         model/cb-ergr-propagation.cc
         model/grid-geometry.cc
         model/ergr-headers.cc
@@ -38,6 +39,7 @@ build_lib(
         model/cb-learner-model.h
         model/acoustic-link-model.h
         model/gm-shadowing.h
+        model/tx-power-level-tag.h
         model/cb-ergr-propagation.h
         model/grid-geometry.h
         model/ergr-headers.h

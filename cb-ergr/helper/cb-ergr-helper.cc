@@ -8,6 +8,7 @@
 #include "ns3/aqua-sim-header-mac.h"
 #include "ns3/aqua-sim-phy-cmn.h"
 #include "ns3/ergr-headers.h"
+#include "ns3/tx-power-level-tag.h"
 #include "ns3/boolean.h"
 #include "ns3/cb-ergr-params.h"
 #include "ns3/double.h"
@@ -113,6 +114,17 @@ CbErgrHelper::HeaderFirstChargeS(Ptr<const Packet> frame, uint16_t nodeId, doubl
         return -1.0; // addressed to this node
     }
     return preambleS + data.GetSerializedSize() * 8.0 / bitRateBps; // preamble + routing header only
+}
+
+void
+CbErgrHelper::EnablePowerLevels(Ptr<AquaSimNetDevice> device, double txPowerFullW)
+{
+    Ptr<AquaSimPhyCmn> phy = DynamicCast<AquaSimPhyCmn>(device->GetPhy());
+    phy->SetTxPowerHook([txPowerFullW](Ptr<const Packet> frame) {
+        TxPowerLevelTag tag;
+        const int level = frame->PeekPacketTag(tag) ? tag.GetLevel() : params::phy::kNumPowerLevels - 1;
+        return txPowerFullW * params::phy::kTxPowerLevelScale[level];
+    });
 }
 
 void

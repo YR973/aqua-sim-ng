@@ -44,6 +44,12 @@ class CbErgrHelper
      */
     static void EnableHeaderFirstRx(Ptr<AquaSimNetDevice> device, uint16_t nodeId, double preambleS, double bitRateBps);
 
+    /**
+     * Per-frame transmit power (spec §4.2): the PHY charges P_tx[level] x airtime, with P_tx[level] =
+     * txPowerFullW x TxPowerLevelScale[level], for frames carrying a TxPowerLevelTag; untagged frames use the full level.
+     */
+    static void EnablePowerLevels(Ptr<AquaSimNetDevice> device, double txPowerFullW);
+
     /// Receive-energy duration of one frame under N-A, or -1 for "the whole frame" (exposed for tests).
     static double HeaderFirstChargeS(Ptr<const Packet> frame, uint16_t nodeId, double preambleS, double bitRateBps);
 

@@ -233,6 +233,7 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         Ptr<AquaSimNetDevice> device = CreateObject<AquaSimNetDevice>();
         asHelper.Create(node, device);
         CbErgrHelper::ConfigureDevice(device, s.bitRateBps);
+        CbErgrHelper::EnablePowerLevels(device, s.txPowerFullW);
         CbErgrHelper::ConnectPhyTrace(device, metrics, node->GetId());
         if (s.headerFirstRx)
         {

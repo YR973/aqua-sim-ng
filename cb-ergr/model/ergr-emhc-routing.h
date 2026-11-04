@@ -83,6 +83,8 @@ class ErgrEmhcRouting : public AquaSimRouting
     // --- Test hooks (used by the integration tests only) ---
     /// Make this node a head of rank 'rank' (or a member for rank 0) without any election messages.
     void ForceRole(uint8_t rank);
+    /// Send one DATA frame of the normal size to 'forwarderId' at a power level, without routing or tracking (power test).
+    void InjectRawFrame(uint16_t forwarderId, uint8_t powerLevel);
     /// Create one data packet now, as if the traffic timer had fired.
     void InjectPacket() { OriginatePacket(); }
     const FeedbackManager* Feedback() const { return m_feedback.get(); }

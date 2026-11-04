@@ -7,6 +7,7 @@
 
 #include "cb-ergr-params.h"
 #include "ergr-headers.h"
+#include "tx-power-level-tag.h"
 
 #include "ns3/aqua-sim-header-mac.h"
 #include "ns3/aqua-sim-header.h"
@@ -183,7 +184,13 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
     MacHeader macHeader;
     peek->RemoveHeader(macHeader);
     const uint8_t frameType = PeekFrameType(peek);
-    const double sourceLevelDb = m_link->SourceLevelDb(stamp.GetPt());
+    // Source level: the tagged power level if the routing layer set one (spec §4.2), otherwise the full level.
+    double sourceLevelDb = m_link->SourceLevelDb(stamp.GetPt());
+    TxPowerLevelTag levelTag;
+    if (p->PeekPacketTag(levelTag))
+    {
+        sourceLevelDb = m_link->FullSourceLevelDb() + params::phy::kSourceLevelOffsetDb[levelTag.GetLevel()];
+    }
 
     Ptr<MobilityModel> senderMobility = s->GetNode()->GetObject<MobilityModel>();
     const uint32_t senderId = s->GetNode()->GetId();

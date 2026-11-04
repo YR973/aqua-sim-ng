@@ -20,6 +20,8 @@ VARIANTS = {
     "QL": ("QLearning", ""),
     "CARP": ("CarpEwma", ""),
     "LinQ": ("LfaQ", ""),
+    "CB-pow": ("CbV5", "EnablePower=true", ["--RegretAllPowerLevels=true"]),
+    "CB-pow-noLife": ("CbV5", "EnablePower=true;EnableLifetime=false", ["--RegretAllPowerLevels=true"]),
     "O": ("Oracle", ""),
     "GO": ("GeoOracle", ""),
 }
@@ -35,13 +37,14 @@ def a1_attributes():
 
 
 VARIANTS["A1"] = ("FittedLogistic", a1_attributes())
-COLUMNS = ["pdr", "regret_mean", "regret_mean_multi_viable", "share_multi_viable", "delay_mean_s", "attempts_total", "retx_per_delivered", "hop_success_truth", "ar_rate",
+COLUMNS = ["pdr", "energy_tx_j", "regret_mean", "regret_mean_multi_viable", "share_multi_viable", "delay_mean_s", "attempts_total", "retx_per_delivered", "hop_success_truth", "ar_rate",
            "ack_frames_per_delivered", "label_ack_frac", "false_negative_rate",
            "ctrl_bytes_total_per_delivered", "energy_per_delivered_j"]
 
 
 def run_one(binary, outroot, variant, seed, args):
-    selector, attrs = VARIANTS[variant]
+    selector, attrs, *rest = VARIANTS[variant]
+    extra = rest[0] if rest else []
     out = os.path.join(outroot, f"{variant}_{seed}")
     cmd = [binary, f"--Selector={selector}", f"--Seed={seed}", f"--N={args.n}", f"--SimTimeS={args.sim}",
            f"--WarmupS={args.warmup}", f"--PktRatePerNodeHz={args.rate}", f"--InitialEnergyJ={args.e0}",
@@ -49,6 +52,7 @@ def run_one(binary, outroot, variant, seed, args):
            "--LogPackets=false"]
     if attrs:
         cmd.append(f"--SelectorAttributes={attrs}")
+    cmd.extend(extra)
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAILED {variant} {seed}: {r.stderr[-300:]}", file=sys.stderr)
