@@ -11,6 +11,11 @@
 #include "ns3/cb-learner-model.h"
 #include "ns3/cb-ergr-config.h"
 #include "ns3/double.h"
+#include "ns3/ergr-headers.h"
+#include "ns3/grid-geometry.h"
+#include "ns3/neighbour-table.h"
+#include "ns3/recent-set.h"
+#include "ns3/scenario-runner.h"
 #include "ns3/energy-price.h"
 #include "ns3/gm-shadowing.h"
 #include "ns3/receipt-window.h"
@@ -22,7 +27,10 @@
 #include "ns3/uinteger.h"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <random>
+#include <sstream>
 
 using namespace ns3;
 using namespace ns3::cbergr;
@@ -811,6 +819,328 @@ class ShadowingIsGaussMarkovAndAccessOrderFree : public TestCase
     }
 };
 
+
+// ============================================================ D3 ===========
+
+// Spec test 9 (§6.5): serialise/deserialise round trips, and GetSerializedSize equals the bytes written.
+class HeadersRoundTripWithExactSizes : public TestCase
+{
+  public:
+    HeadersRoundTripWithExactSizes()
+        : TestCase("D3 test9: header round trips and exact sizes")
+    {
+    }
+
+  private:
+    template <typename H>
+    void CheckSize(const H& header, uint32_t expected, const std::string& name)
+    {
+        Ptr<Packet> p = Create<Packet>(0);
+        p->AddHeader(header);
+        NS_TEST_ASSERT_MSG_EQ(header.GetSerializedSize(), expected, name << " declared size");
+        NS_TEST_ASSERT_MSG_EQ(p->GetSize(), expected, name << " bytes actually written");
+    }
+
+    void DoRun() override
+    {
+        ErgrDataHeader d;
+        d.senderId = 11;
+        d.forwarderId = 22;
+        d.sourceId = 33;
+        d.sourceSeq = 65535;
+        d.hpkt = 4;
+        d.hopSeq = 40000;
+        d.SetFlags(true, false, 2);
+        d.genTimeMs = 123456789;
+        CheckSize(d, 17, "DATA");
+        Ptr<Packet> p = Create<Packet>(150);
+        p->AddHeader(d);
+        NS_TEST_ASSERT_MSG_EQ(PeekFrameType(p), static_cast<uint8_t>(FrameType::Data), "type byte");
+        ErgrDataHeader d2;
+        p->RemoveHeader(d2);
+        NS_TEST_ASSERT_MSG_EQ(p->GetSize(), 150u, "payload untouched");
+        NS_TEST_ASSERT_MSG_EQ(d2.forwarderId, 22, "forwarder");
+        NS_TEST_ASSERT_MSG_EQ(d2.sourceSeq, 65535, "seq");
+        NS_TEST_ASSERT_MSG_EQ(d2.hopSeq, 40000, "hopSeq");
+        NS_TEST_ASSERT_MSG_EQ(d2.genTimeMs, 123456789u, "genTime");
+        NS_TEST_ASSERT_MSG_EQ(d2.GetAckRequest(), true, "AR");
+        NS_TEST_ASSERT_MSG_EQ(d2.GetPriority(), false, "priority");
+        NS_TEST_ASSERT_MSG_EQ(int(d2.GetPowerLevel()), 2, "power level");
+
+        ErgrAckHeader a;
+        a.ackerId = 5;
+        a.senderId = 6;
+        a.hopSeq = 7;
+        CheckSize(a, 7, "ACK");
+
+        // Beacon without and with receipts and blob; negative position/velocity must survive.
+        ErgrBeaconHeader b;
+        b.nodeId = 9;
+        b.cellId = 63;
+        b.SetRole(true, 2, false);
+        b.hmin = 3;
+        b.pos[0] = -12;
+        b.pos[1] = 2999;
+        b.pos[2] = 0;
+        b.velMmps[0] = -1500;
+        b.velMmps[1] = 20;
+        b.velMmps[2] = 32000;
+        b.battery = 200;
+        b.queueLen = 4;
+        b.nextBeaconDs = 500;
+        CheckSize(b, 25, "BEACON base");
+        b.receipts.push_back({3, 65535, 0xF0F0F0F0u});
+        b.receipts.push_back({4, 1, 0x1u});
+        CheckSize(b, 25 + 16, "BEACON + 2 receipts");
+        b.hasBlob = true;
+        for (int i = 0; i < ModelBlob::kDim; ++i)
+        {
+            b.blob.theta[i] = static_cast<int16_t>(-1000 * i);
+            b.blob.diagA[i] = static_cast<uint16_t>(60000 + i);
+        }
+        CheckSize(b, 25 + 16 + 36, "BEACON + receipts + blob");
+        Ptr<Packet> bp = Create<Packet>(0);
+        bp->AddHeader(b);
+        ErgrBeaconHeader b2;
+        bp->RemoveHeader(b2);
+        NS_TEST_ASSERT_MSG_EQ(bp->GetSize(), 0u, "all bytes consumed");
+        NS_TEST_ASSERT_MSG_EQ(b2.nodeId, 9, "node");
+        NS_TEST_ASSERT_MSG_EQ(b2.IsHead(), true, "head");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.HeadRank()), 2, "rank");
+        NS_TEST_ASSERT_MSG_EQ(b2.IsSink(), false, "sink");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.pos[0]), -12, "negative pos");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.velMmps[0]), -1500, "negative vel");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.velMmps[2]), 32000, "large vel");
+        NS_TEST_ASSERT_MSG_EQ(b2.receipts.size(), 2u, "two receipts");
+        NS_TEST_ASSERT_MSG_EQ(b2.receipts[0].mask, 0xF0F0F0F0u, "mask");
+        NS_TEST_ASSERT_MSG_EQ(b2.receipts[0].highest, 65535, "highest");
+        NS_TEST_ASSERT_MSG_EQ(b2.hasBlob, true, "blob flag");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.blob.theta[3]), -3000, "blob theta");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.blob.diagA[8]), 60008, "blob diag");
+        NS_TEST_ASSERT_MSG_EQ(b2.BaseBytes() + b2.ReceiptBytes() + b2.BlobBytes(), b2.GetSerializedSize(),
+                              "size classes add up");
+
+        ErgrElectionHeader e;
+        e.kind = ErgrElectionHeader::Retire;
+        e.nodeId = 1;
+        e.cellId = 2;
+        e.rank = 2;
+        e.scoreQ = 65535;
+        CheckSize(e, 9, "ELECTION");
+        ErgrNackHeader n;
+        n.nackerId = 1;
+        n.upstreamId = 2;
+        n.sourceId = 3;
+        n.sourceSeq = 4;
+        CheckSize(n, 9, "NACK");
+    }
+};
+
+// Grid geometry (K§2.1): 4^3 cells at 750 m, 26 neighbours inside, fewer at borders, 6 face-only.
+class GridGeometryIndexesCellsAndNeighbours : public TestCase
+{
+  public:
+    GridGeometryIndexesCellsAndNeighbours()
+        : TestCase("D3: grid cells, neighbours and hysteresis margin")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        GridGeometry g(3000.0, 750.0);
+        NS_TEST_ASSERT_MSG_EQ(g.CellsPerAxis(), 4, "3000 / 750");
+        NS_TEST_ASSERT_MSG_EQ(g.NumCells(), 64, "64 cells");
+        NS_TEST_ASSERT_MSG_EQ(g.CellIdOf(Vector(10, 10, 10)), 0, "origin cell");
+        NS_TEST_ASSERT_MSG_EQ(g.CellIdOf(Vector(800, 10, 10)), 1, "next in x");
+        NS_TEST_ASSERT_MSG_EQ(g.CellIdOf(Vector(10, 800, 10)), 4, "next in y");
+        NS_TEST_ASSERT_MSG_EQ(g.CellIdOf(Vector(10, 10, 800)), 16, "next in z");
+        NS_TEST_ASSERT_MSG_EQ(g.CellIdOf(Vector(-50, 5000, 3000)), 0 + 4 * 3 + 16 * 3, "clamped into the box");
+
+        uint16_t interior = g.CellIdOf(Vector(1125, 1125, 1125)); // cell (1,1,1)
+        NS_TEST_ASSERT_MSG_EQ(g.NeighbourCells(interior, false).size(), 26u, "interior: 26");
+        NS_TEST_ASSERT_MSG_EQ(g.NeighbourCells(interior, true).size(), 6u, "interior face-only: 6");
+        NS_TEST_ASSERT_MSG_EQ(g.NeighbourCells(0, false).size(), 7u, "corner: 7");
+        NS_TEST_ASSERT_MSG_EQ(g.NeighbourCells(0, true).size(), 3u, "corner face-only: 3");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighbours(0, 1, true), true, "face neighbours");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighbours(0, 5, true), false, "edge neighbour is not face-only");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighbours(0, 5, false), true, "edge neighbour");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighbours(0, 2, false), false, "two cells away");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighbours(7, 7, false), false, "not its own neighbour");
+
+        Vector c = g.CellCentre(interior);
+        NS_TEST_ASSERT_MSG_EQ_TOL(c.x, 1125.0, 1e-9, "centre x");
+        NS_TEST_ASSERT_MSG_EQ_TOL(g.MaxCentreDistanceM(), 0.5 * std::sqrt(3.0) * 750.0, 1e-9, "half diagonal");
+        NS_TEST_ASSERT_MSG_EQ_TOL(g.InsideMarginM(c, interior), 375.0, 1e-9, "centre is 375 m from every face");
+        NS_TEST_ASSERT_MSG_EQ_TOL(g.InsideMarginM(Vector(1500 + 10, 1125, 1125), interior), -10.0, 1e-9,
+                                  "outside the cell is negative");
+        // 600 m cells: 5 per axis.
+        NS_TEST_ASSERT_MSG_EQ(GridGeometry(3000.0, 600.0).CellsPerAxis(), 5, "5^3 cells at 600 m");
+        NS_TEST_ASSERT_MSG_EQ(GridGeometry(3000.0, 866.0).CellsPerAxis(), 4, "R/sqrt(3) cells");
+    }
+};
+
+// Neighbour table (§7.1): update, head change detection, expiry, entry age reset when a node becomes head.
+class NeighbourTableTracksHeadsAndExpires : public TestCase
+{
+  public:
+    NeighbourTableTracksHeadsAndExpires()
+        : TestCase("D3: neighbour table update, head change, expiry")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        NeighbourTable table;
+        NeighbourEntry e;
+        e.id = 7;
+        e.cellId = 3;
+        e.beaconTime = Seconds(10);
+        TableUpdateResult r = table.Update(e);
+        NS_TEST_ASSERT_MSG_EQ(r.isNew, true, "first beacon creates the row");
+        e.beaconTime = Seconds(60);
+        r = table.Update(e);
+        NS_TEST_ASSERT_MSG_EQ(r.isNew, false, "second beacon refreshes");
+        NS_TEST_ASSERT_MSG_EQ(r.headStatusChanged, false, "no change");
+        NS_TEST_ASSERT_MSG_EQ_TOL(table.Find(7)->firstHeard.GetSeconds(), 10.0, 1e-9, "age kept");
+
+        e.beaconTime = Seconds(110);
+        e.isHead = true;
+        e.headRank = 1;
+        r = table.Update(e);
+        NS_TEST_ASSERT_MSG_EQ(r.headStatusChanged, true, "became head");
+        NS_TEST_ASSERT_MSG_EQ_TOL(table.Find(7)->firstHeard.GetSeconds(), 110.0, 1e-9, "age reset on becoming head (K§2.3)");
+
+        NeighbourEntry other;
+        other.id = 8;
+        other.beaconTime = Seconds(200);
+        table.Update(other);
+        std::vector<uint16_t> removed = table.Expire(Seconds(300), Seconds(150));
+        NS_TEST_ASSERT_MSG_EQ(removed.size(), 1u, "node 7 (last heard 110 s) is stale at 300 s");
+        NS_TEST_ASSERT_MSG_EQ(int(removed[0]), 7, "removed id");
+        NS_TEST_ASSERT_MSG_EQ(table.Size(), 1u, "node 8 stays");
+
+        // Position prediction uses the advertised velocity.
+        NeighbourEntry moving;
+        moving.id = 9;
+        moving.pos = Vector(100, 0, 0);
+        moving.vel = Vector(2, 0, -1);
+        moving.beaconTime = Seconds(10);
+        Vector p = moving.PredictedPos(Seconds(20));
+        NS_TEST_ASSERT_MSG_EQ_TOL(p.x, 120.0, 1e-9, "x");
+        NS_TEST_ASSERT_MSG_EQ_TOL(p.z, -10.0, 1e-9, "z");
+    }
+};
+
+// Duplicate filter (§7): capacity and TTL.
+class RecentSetRemembersWithinCapacityAndTtl : public TestCase
+{
+  public:
+    RecentSetRemembersWithinCapacityAndTtl()
+        : TestCase("D3: duplicate filter capacity and TTL")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        RecentSet set(3, Seconds(100));
+        NS_TEST_ASSERT_MSG_EQ(set.Insert({1, 1}, Seconds(0)), true, "new");
+        NS_TEST_ASSERT_MSG_EQ(set.Insert({1, 1}, Seconds(1)), false, "duplicate");
+        set.Insert({1, 2}, Seconds(2));
+        set.Insert({1, 3}, Seconds(3));
+        set.Insert({1, 4}, Seconds(4)); // pushes {1,1} out by capacity
+        NS_TEST_ASSERT_MSG_EQ(set.Insert({1, 1}, Seconds(5)), true, "forgotten by capacity");
+        NS_TEST_ASSERT_MSG_EQ(set.Insert({1, 4}, Seconds(6)), false, "still remembered");
+        NS_TEST_ASSERT_MSG_EQ(set.Insert({1, 4}, Seconds(500)), true, "forgotten by TTL");
+    }
+};
+
+
+// Run a small complete scenario and return the result; the simulator is destroyed afterwards.
+static ScenarioResult
+RunTinyScenario(const std::string& outDir, int seed, double speed, int nodes = 30, double simTimeS = 700)
+{
+    ScenarioSettings settings;
+    settings.outDir = outDir;
+    settings.seed = seed;
+    settings.numNodes = nodes;
+    settings.simTimeS = simTimeS;
+    settings.warmupS = 300;
+    settings.pktRateHz = 0.01;
+    settings.currentSpeed = speed;
+    ScenarioConfig config;
+    RegisterSettings(config, settings);
+    return RunScenario(settings, config);
+}
+
+static std::string
+ReadFile(const std::string& path)
+{
+    std::ifstream in(path);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+// Spec test 15: the same seed and run give byte-identical output files.
+class SameSeedGivesIdenticalOutput : public TestCase
+{
+  public:
+    SameSeedGivesIdenticalOutput()
+        : TestCase("D3 test15: determinism (same seed, identical CSVs)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string base = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-det";
+        RunTinyScenario(base + "-a", 7, 1.0);
+        RunTinyScenario(base + "-b", 7, 1.0);
+        RunTinyScenario(base + "-c", 8, 1.0);
+        for (const char* file : {"summary.csv", "packets.csv", "nodes.csv", "events.csv"})
+        {
+            NS_TEST_ASSERT_MSG_EQ((ReadFile(base + "-a/" + file) == ReadFile(base + "-b/" + file)), true,
+                                  file << " differs between two runs with the same seed");
+        }
+        NS_TEST_ASSERT_MSG_EQ((ReadFile(base + "-a/packets.csv") != ReadFile(base + "-c/packets.csv")), true,
+                              "a different seed should give a different run");
+        std::filesystem::remove_all(base + "-a");
+        std::filesystem::remove_all(base + "-b");
+        std::filesystem::remove_all(base + "-c");
+    }
+};
+
+// A whole small run: elections happen, packets are delivered, files are written, and the
+// consistency checks of K§2.6 (run inside Finalize) pass.
+class SmallScenarioRunsAndIsConsistent : public TestCase
+{
+  public:
+    SmallScenarioRunsAndIsConsistent()
+        : TestCase("D3: small scenario runs, delivers packets and passes consistency checks")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-small";
+        ScenarioResult r = RunTinyScenario(dir, 3, 1.0);
+        NS_TEST_ASSERT_MSG_EQ((r.packetsCreated > 20), true, "traffic was generated");
+        NS_TEST_ASSERT_MSG_EQ((r.packetsDelivered > 0), true, "some packets reached a sink");
+        NS_TEST_ASSERT_MSG_EQ((r.pdr > 0.0 && r.pdr <= 1.0), true, "PDR in (0, 1]");
+        for (const char* file : {"summary.csv", "packets.csv", "nodes.csv", "events.csv", "params_used.txt"})
+        {
+            NS_TEST_ASSERT_MSG_EQ(std::filesystem::exists(dir + "/" + file), true, file << " written");
+        }
+        NS_TEST_ASSERT_MSG_EQ((ReadFile(dir + "/events.csv").find("HEAD_ELECTED") != std::string::npos), true,
+                              "heads were elected");
+        std::filesystem::remove_all(dir);
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -836,6 +1166,12 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new AirtimeIncludesTheExactPreamble, TestCase::QUICK);
         AddTestCase(new LinkBudgetIsCalibratedAtRange, TestCase::QUICK);
         AddTestCase(new ShadowingIsGaussMarkovAndAccessOrderFree, TestCase::QUICK);
+        AddTestCase(new HeadersRoundTripWithExactSizes, TestCase::QUICK);
+        AddTestCase(new GridGeometryIndexesCellsAndNeighbours, TestCase::QUICK);
+        AddTestCase(new NeighbourTableTracksHeadsAndExpires, TestCase::QUICK);
+        AddTestCase(new RecentSetRemembersWithinCapacityAndTtl, TestCase::QUICK);
+        AddTestCase(new SmallScenarioRunsAndIsConsistent, TestCase::QUICK);
+        AddTestCase(new SameSeedGivesIdenticalOutput, TestCase::QUICK);
     }
 };
 

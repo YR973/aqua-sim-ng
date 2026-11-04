@@ -7,7 +7,18 @@ build_lib(
         model/acoustic-link-model.cc
         model/gm-shadowing.cc
         model/cb-ergr-propagation.cc
+        model/grid-geometry.cc
+        model/ergr-headers.cc
+        model/neighbour-table.cc
+        model/forwarder-selector.cc
+        model/selector-round-robin.cc
+        model/localisation-noise.cc
+        model/current-drift-mobility.cc
+        model/metrics-collector.cc
+        model/ergr-emhc-routing.cc
+        model/scenario-config.cc
         helper/cb-ergr-helper.cc
+        helper/scenario-runner.cc
     HEADER_FILES
         model/cb-ergr-config.h
         model/cb-ergr-params.h
@@ -19,7 +30,19 @@ build_lib(
         model/acoustic-link-model.h
         model/gm-shadowing.h
         model/cb-ergr-propagation.h
+        model/grid-geometry.h
+        model/ergr-headers.h
+        model/neighbour-table.h
+        model/forwarder-selector.h
+        model/selector-round-robin.h
+        model/localisation-noise.h
+        model/current-drift-mobility.h
+        model/metrics-collector.h
+        model/recent-set.h
+        model/ergr-emhc-routing.h
+        model/scenario-config.h
         helper/cb-ergr-helper.h
+        helper/scenario-runner.h
     LIBRARIES_TO_LINK
         ${libaqua-sim-ng}
         ${libmobility}
@@ -45,6 +68,17 @@ build_lib_example(
 build_lib_example(
     NAME link-per-curve
     SOURCE_FILES examples/link-per-curve.cc
+    LIBRARIES_TO_LINK
+        ${libcb-ergr}
+        ${libaqua-sim-ng}
+        ${libnetwork}
+        ${libmobility}
+        ${libenergy}
+)
+
+build_lib_example(
+    NAME cb-ergr-scenario
+    SOURCE_FILES examples/cb-ergr-scenario.cc
     LIBRARIES_TO_LINK
         ${libcb-ergr}
         ${libaqua-sim-ng}

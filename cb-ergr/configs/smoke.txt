@@ -1,0 +1,6 @@
+# configs/smoke.txt: quick check (kickoff "saving credits"): 100 nodes, 2000 s, light traffic.
+# 0.004 pkt/s is the pilot's rate; the base 0.07 pkt/s saturates the channel (see PROGRESS.md).
+N = 100
+SimTimeS = 2000
+WarmupS = 300
+PktRatePerNodeHz = 0.004

@@ -6,7 +6,9 @@
 #include "cb-ergr-propagation.h"
 
 #include "cb-ergr-params.h"
+#include "ergr-headers.h"
 
+#include "ns3/aqua-sim-header-mac.h"
 #include "ns3/aqua-sim-header.h"
 #include "ns3/aqua-sim-net-device.h"
 #include "ns3/double.h"
@@ -86,7 +88,7 @@ CbErgrPropagation::GetTypeId()
             .AddTraceSource("LinkEval",
                             "Result of the link decision for one frame and one receiver.",
                             MakeTraceSourceAccessor(&CbErgrPropagation::m_linkEval),
-                            "ns3::TracedCallback<uint32_t, uint32_t, double, double, double, bool, uint32_t>");
+                            "ns3::TracedCallback<uint32_t, uint32_t, double, double, double, bool, uint32_t, uint8_t>");
     return tid;
 }
 
@@ -156,6 +158,11 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
     peek->RemoveHeader(stamp);
     peek->PeekHeader(header);
     const uint32_t frameBytes = header.GetSize();
+    // Frame type = first byte of our own header, which sits behind the Aqua-Sim and MAC headers.
+    peek->RemoveHeader(header);
+    MacHeader macHeader;
+    peek->RemoveHeader(macHeader);
+    const uint8_t frameType = PeekFrameType(peek);
     const double sourceLevelDb = m_link->SourceLevelDb(stamp.GetPt());
 
     Ptr<MobilityModel> senderMobility = s->GetNode()->GetObject<MobilityModel>();
@@ -180,7 +187,7 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
         const double snrDb = m_link->SnrDb(sourceLevelDb, distanceM, shadowDb);
         const double per = m_link->PerFromSnr(snrDb, frameBytes);
         const bool decodable = m_lossDraw->GetValue() >= per;
-        m_linkEval(senderId, receiverId, distanceM, snrDb, per, decodable, frameBytes);
+        m_linkEval(senderId, receiverId, distanceM, snrDb, per, decodable, frameBytes, frameType);
 
         PktRecvUnit unit;
         unit.recver = receiver;

@@ -17,6 +17,43 @@ namespace ns3
 namespace cbergr
 {
 
+namespace
+{
+// Trace sinks. The propagation reports (tx, rx, distance, snr, per, ok, bytes, frameType).
+void
+OnLinkEval(Ptr<MetricsCollector> metrics,
+           uint32_t txNode,
+           uint32_t rxNode,
+           double distM,
+           double snrDb,
+           double per,
+           bool ok,
+           uint32_t bytes,
+           uint8_t frameType)
+{
+    metrics->OnLinkEval(txNode, rxNode, static_cast<FrameType>(frameType), bytes, distM, snrDb, ok,
+                        RxFailReason::PerLoss);
+}
+
+void
+OnPhyRxError(Ptr<MetricsCollector> metrics, uint32_t nodeId)
+{
+    metrics->OnPhyRxError(nodeId);
+}
+} // namespace
+
+void
+CbErgrHelper::ConnectLinkTrace(Ptr<CbErgrPropagation> propagation, Ptr<MetricsCollector> metrics)
+{
+    propagation->TraceConnectWithoutContext("LinkEval", MakeBoundCallback(&OnLinkEval, metrics));
+}
+
+void
+CbErgrHelper::ConnectPhyTrace(Ptr<AquaSimNetDevice> device, Ptr<MetricsCollector> metrics, uint32_t nodeId)
+{
+    device->GetPhy()->TraceConnectWithoutContext("RxColl", MakeBoundCallback(&OnPhyRxError, metrics, nodeId));
+}
+
 Ptr<AquaSimChannel>
 CbErgrHelper::CreateChannel(Ptr<CbErgrPropagation>& propagation,
                             double shadowSigmaDb,
@@ -47,6 +84,7 @@ CbErgrHelper::ConfigureHelper(AquaSimHelper& helper,
                   "ExactPreamble", BooleanValue(true),            // patch P1
                   "RxEnergyUsesAirtime", BooleanValue(true),      // patch P2
                   "KeepEnergyTxPower", BooleanValue(true),        // patch P3
+                  "EnforceHalfDuplex", BooleanValue(true),        // patch P5
                   "PT", DoubleValue(params::phy::kReferenceAcousticPtW),
                   "RXThresh", DoubleValue(params::phy::kRxThreshold));
     helper.SetEnergyModel("ns3::AquaSimEnergyModel",

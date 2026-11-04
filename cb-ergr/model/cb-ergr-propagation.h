@@ -70,8 +70,8 @@ class CbErgrPropagation : public AquaSimPropagation
     Ptr<GmShadowing> m_shadowing;
     Ptr<UniformRandomVariable> m_lossDraw;
 
-    /// (sender node, receiver node, distance m, SNR dB, PER, frame decodable?, frame bytes)
-    TracedCallback<uint32_t, uint32_t, double, double, double, bool, uint32_t> m_linkEval;
+    /// (sender node, receiver node, distance m, SNR dB, PER, frame decodable?, frame bytes, frame type)
+    TracedCallback<uint32_t, uint32_t, double, double, double, bool, uint32_t, uint8_t> m_linkEval;
 };
 
 } // namespace cbergr

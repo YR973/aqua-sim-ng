@@ -35,6 +35,7 @@ constexpr double kCellSizeM = 750.0;     // [DESIGN] D§3 P1 (4^3 cells); 600 m 
 constexpr double kPublishedCellSizeM = 866.0; // [CONFIRM] A1: P0 uses R/sqrt(3) ~ 866 m
 constexpr int kHeadsPerCell = 2;         // [DESIGN] D§3 P2; P0 uses 1
 constexpr bool kFaceOnly = false;        // [DESIGN] K§2.1: false = 26 adjacent cells
+constexpr bool kStrictProgress = true;   // [DESIGN] K§2.1 loop guard: candidate must be closer in hops or shallower
 } // namespace grid
 
 // ----------------------------------------------------------------- phy ----
@@ -80,6 +81,10 @@ namespace mobility
 {
 constexpr double kCurrentSpeedMps = 1.0; // [SPEC] S§4.6 U; sweep {0, 0.5, 1, 2}
 constexpr double kVerticalDriftFactor = 0.1; // [SPEC] S§4.6 vertical drift = 0.1 U
+constexpr double kUpdateIntervalS = 5.0; // [DESIGN] mobility integration step; positions are extrapolated between steps
+constexpr double kOuTauS = 300.0;        // [CONFIRM] pilot: OU correlation time of the per-node perturbation
+constexpr double kOuSigmaFraction = 0.3; // [CONFIRM] pilot: OU std per axis as a fraction of CurrentSpeed
+constexpr double kMeanderPeriodS = 3600.0; // [CONFIRM] pilot: period of the meandering current / vertical drift
 constexpr double kLocErrM = 20.0;        // [SPEC] S§4.7 per axis
 constexpr double kVelErrMps = 0.1;       // [SPEC] S§4.7
 } // namespace mobility
@@ -110,6 +115,14 @@ constexpr double kAckProcS = 0.05;       // [SPEC] S§9.1 TProc
 constexpr double kAckGuardS = 0.2;       // [SPEC] S§9.1 TGuard
 constexpr double kPriceTickS = 600.0;    // [SPEC] S§8.9
 constexpr double kElectionPeriodS = 400.0; // [CONFIRM] Q2
+constexpr double kElectionOffsetPerCellS = 2.0; // [DESIGN] D§3 P3 elections offset by cell id (cell k starts k*2 s late)
+constexpr double kFirstElectionS = 55.0; // [DESIGN] D§3 P6 after every node has beaconed once (one beacon period + 5 s)
+constexpr double kNackWindowS = 8.0;     // [CONFIRM] A6 how long a forwarded packet is remembered for void NACKs
+constexpr int kVoidRetryLimit = 3;       // [CONFIRM] A6 NACK-triggered re-selections before the packet is dropped
+constexpr double kDataStartS = 300.0;    // [DESIGN] D§3 P6 data starts after start-up
+constexpr double kBeaconJitterFraction = 0.0; // beacons are strictly periodic after a random first phase
+constexpr int kDuplicateCapacity = 1024; // [SPEC] S§7 duplicate filter size
+constexpr double kDuplicateTtlS = 600.0; // [SPEC] S§7 duplicate filter lifetime
 } // namespace timers
 
 // ------------------------------------------------------------ election ----

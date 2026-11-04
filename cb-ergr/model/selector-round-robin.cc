@@ -1,0 +1,53 @@
+/*
+ * selector-round-robin.cc: round robin over the eligible heads (spec §5.1, §11 B1).
+ */
+
+#include "selector-round-robin.h"
+
+#include "cb-ergr-params.h"
+
+namespace ns3
+{
+namespace cbergr
+{
+
+NS_OBJECT_ENSURE_REGISTERED(SelectorRoundRobin);
+
+TypeId
+SelectorRoundRobin::GetTypeId()
+{
+    static TypeId tid = TypeId("ns3::cbergr::SelectorRoundRobin")
+                            .SetParent<ForwarderSelector>()
+                            .AddConstructor<SelectorRoundRobin>();
+    return tid;
+}
+
+Decision
+SelectorRoundRobin::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligible, Time now)
+{
+    Decision d;
+    if (eligible.empty())
+    {
+        return d; // invalid decision: caller handles the void
+    }
+    // Candidates arrive sorted by id. Take the first id larger than the last one used; wrap to the start.
+    const Candidate* chosen = &eligible.front();
+    for (const Candidate& c : eligible)
+    {
+        if (static_cast<int32_t>(c.id) > m_lastId)
+        {
+            chosen = &c;
+            break;
+        }
+    }
+    m_lastId = chosen->id;
+
+    d.fwdId = chosen->id;
+    d.powerLevel = params::phy::kNumPowerLevels - 1; // full power
+    d.ackRequest = false;                            // no hop ACKs in the published protocol
+    d.valid = true;
+    return d;
+}
+
+} // namespace cbergr
+} // namespace ns3

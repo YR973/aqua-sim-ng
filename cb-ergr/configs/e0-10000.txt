@@ -1,0 +1,5 @@
+# configs/e0-10000.txt: battery large enough that nodes do not die during a 2000-20000 s run.
+# With the published 300 J, Rx energy is ~90% of the total and the first node dies after 670-1290 s
+# at N = 250 (PROGRESS.md, calibration). Use this to compare forwarding methods without deaths
+# dominating, until N-A / N-C and the real E0 are settled (CONFIRM B1, Q4).
+InitialEnergyJ = 10000

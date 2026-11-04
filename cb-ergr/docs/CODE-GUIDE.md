@@ -2,9 +2,31 @@
 
 This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code keeps it in sync with the code (`doc/CODE-GUIDE.md`). If a file named here doesn't exist, check `doc/CHANGELOG.md` for a rename.
 
-> **Build status (kept up to date by Claude Code).** Written so far: the learner maths (`cb-learner-model.h`, `small-matrix.h`, `receipt-window.h`, `serial-number.h`, `energy-price.h`), the channel (`acoustic-link-model.*`, `gm-shadowing.*`, `cb-ergr-propagation.*`), `helper/cb-ergr-helper.*`, `model/cb-ergr-params.h`, and the examples `cb-ergr-smoke` and `link-per-curve`. The routing, selectors, feedback manager and `cb-ergr-scenario` named below do not exist yet (steps D3-D5); run `./ns3 run link-per-curve` today to see the channel. Learner functions are currently named after the model: `BeginDecision` (forgetting, §8.3), `SampleTheta`/`Width` (§8.4/§8.6), `AddSendEvidence` (§8.7), `UpdateWithLabel` (§8.8).
+> **Build status (kept up to date by Claude Code; last update: end of step D3).**
+> Working now: the whole substrate (ERGR-EMHC-g) with the `RoundRobin` selector, the SNR channel, metrics and CSVs, `cb-ergr-scenario`, and the learner maths as a pure-C++ library with tests. **Not written yet:** `FeedbackManager` and ACKs (D4), `SelectorCbV5` and the other selectors (D5, D6), handover and power patch (D7). So `Selector=CbV5` does not exist yet, and the pages below that describe it say what it *will* contain.
 >
-> **Upstream Aqua-Sim files we patched** (all off by default, see `doc/PATCHES.md`): `model/aqua-sim-phy-cmn.{h,cc}`, `model/aqua-sim-energy-model.{h,cc}`.
+> **Where things are now** (all under `contrib/cb-ergr/`):
+>
+> | File | What it does |
+> |---|---|
+> | `model/cb-ergr-params.h` | Every default value (the only place) |
+> | `model/ergr-emhc-routing.{h,cc}` | Per-node routing: beacons, election, Hmin, eligible list (`GetEligible`), forwarding, member hand-off, void NACK |
+> | `model/forwarder-selector.{h,cc}`, `selector-round-robin.{h,cc}` | The interface and the round-robin method |
+> | `model/cb-learner-model.h`, `small-matrix.h`, `receipt-window.h`, `serial-number.h`, `energy-price.h` | The learner maths: `BeginDecision` (forgetting), `SampleTheta`, `Width`, `AddSendEvidence`, `UpdateWithLabel`, sharing, handover; matrices; receipt bitmap; energy price |
+> | `model/acoustic-link-model.*`, `gm-shadowing.*`, `cb-ergr-propagation.*` | The channel: link budget and PER, shadowing, the per-frame decision |
+> | `model/grid-geometry.*`, `neighbour-table.*`, `ergr-headers.*`, `recent-set.h`, `localisation-noise.*`, `current-drift-mobility.*` | Grid, G1 table, packet headers, duplicate filter, noisy self-position, drifting nodes |
+> | `model/metrics-collector.*` | All counters and CSV writers; protocol code only calls its `On...` hooks |
+> | `model/scenario-config.*`, `helper/scenario-runner.*`, `helper/cb-ergr-helper.*` | Settings layers, the scenario builder, PHY/channel/energy set-up |
+> | `examples/cb-ergr-scenario.cc` | Command-line front end (`./ns3 run "cb-ergr-scenario --N=100 --SimTimeS=2000 --OutDir=results/x"`) |
+> | `examples/link-per-curve.cc`, `cb-ergr-smoke.cc` | Channel check (PER vs distance) and a link smoke test |
+> | `configs/*.txt` | `base`, `p0-published`, `smoke`, `e0-10000` |
+> | `test/cb-ergr-test-suite.cc` | All tests, named after the behaviour they check |
+>
+> Not implemented from the command list below: `--PrintAttributes`, `Selector=CbV5`. `ConfigFile` and every setting listed by `--help` work.
+>
+> **Upstream Aqua-Sim files we patched** (all off by default; the helper turns them on): `model/aqua-sim-phy-cmn.{h,cc}`, `model/aqua-sim-energy-model.{h,cc}`. See `doc/PATCHES.md`.
+>
+> **Reading the first results.** With the published 300 J battery nodes die within 10-20 minutes because receiving costs ~90% of the energy; use `--ConfigFile=configs/e0-10000.txt` to compare methods. The base rate of 0.07 pkt/s saturates the channel; `configs/smoke.txt` uses 0.004 pkt/s. Details in `PROGRESS.md` and `doc/CONFIRM.md` (E13).
 
 **The rule of thumb:** of the roughly 25 files in `contrib/cb-ergr/`, you only need **6** to understand the thesis. The rest are plumbing (headers, timers, matrix maths, the channel model) that you read only when something looks wrong.
 

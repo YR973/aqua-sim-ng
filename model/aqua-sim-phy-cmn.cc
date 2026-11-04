@@ -152,6 +152,10 @@ AquaSimPhyCmn::GetTypeId(void)
       BooleanValue(false),
       MakeBooleanAccessor(&AquaSimPhyCmn::m_keepEnergyTxPower),
       MakeBooleanChecker())
+    .AddAttribute("EnforceHalfDuplex", "CB-ERGR patch P5: lose any frame that arrives while this node is transmitting (upstream has this check commented out).",
+      BooleanValue(false),
+      MakeBooleanAccessor(&AquaSimPhyCmn::m_enforceHalfDuplex),
+      MakeBooleanChecker())
     .AddAttribute("PTLevel", "Level of transmitted signal power.",
       UintegerValue(0),
       MakeUintegerAccessor(&AquaSimPhyCmn::m_ptLevel),
@@ -488,7 +492,8 @@ AquaSimPhyCmn::PrevalidateIncomingPkt(Ptr<Packet> p)
 //              || GetNetDevice()->GetTransmissionStatus() == RECV /* possible collision */
 //				      || pstamp.GetPr() < m_RXThresh)
   if ((EM() && EM()->GetEnergy() <= 0) || GetNetDevice()->GetTransmissionStatus() == RECV /* possible collision */
-				      || pstamp.GetPr() < m_RXThresh)
+				      || pstamp.GetPr() < m_RXThresh
+				      || (m_enforceHalfDuplex && GetNetDevice()->GetTransmissionStatus() == SEND)) // CB-ERGR patch P5
   {
     /**
     * p still can pass since its signal may affect other packets

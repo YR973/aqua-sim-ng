@@ -2,6 +2,23 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 03:00 — D3 ERGR-EMHC-g + RoundRobin pipeline (routing, election, metrics, scenario)
+- What: new `grid-geometry`, `ergr-headers`, `neighbour-table`, `recent-set`, `forwarder-selector`, `selector-round-robin`, `localisation-noise`, `current-drift-mobility`, `metrics-collector`, `ergr-emhc-routing`, `scenario-config` (model/); `scenario-runner` (helper/); `examples/cb-ergr-scenario.cc`; `configs/{base,p0-published,smoke,e0-10000}.txt`; patch P5 (half-duplex). 9 new test cases (headers, grid, table, duplicate filter, small run, determinism).
+- Why: kickoff §4 D3. The base scenario now runs end to end and writes summary/nodes/packets/events CSVs (frames.csv with `--LogFrames=true`) with reason codes and the consistency checks of K§2.6.
+- Effect on results: first RoundRobin numbers (see PROGRESS.md calibration). No tuning was done.
+- Spec/design deviation: the following choices fill gaps in the docs; each is also in CONFIRM.md (E10-E15):
+  1. **Sinks are candidates from anywhere within range**, not only from the 26 adjacent cells. Reason: a head in the same cell as a sink would otherwise have no way to reach it.
+  2. **Strict progress** (K§2.1 "loop guard") is implemented as: candidate has a smaller Hmin than mine OR is shallower than me (sinks always pass). The spec's `Hmin_j <= Hpkt` rule is applied as well. The previous hop is always excluded.
+  3. **Members** hand their packet to a head of their own cell (round robin over the heads); the head restarts the hop budget from its own Hmin (Hpkt = Hmin of the head). The member to head hop does not use a hop.
+  4. **Hmin** is recomputed from beacons (50 s old at worst) instead of the ordered start-up wave of D§3 P6. Convergence takes a few beacon periods; start-up metrics are not reported yet.
+  5. **Election**: first round at 55 s (+2 s per cell id) with beta = 0, then every 400 s. A node ranked <= k claims in slot (rank-1) s + jitter. Extra triggers (debounced to one per beacon period): a head of my cell disappears or leaves, I join a cell with fewer than k heads. A node that hears k better heads in its cell retires (RETIRE frame). Claims are unconditional; conflicts are resolved by that retire rule.
+  6. **RoundRobin** takes the next larger id after the one used last (wrapping); the list is the current eligible set.
+  7. **Traffic** is generated inside the routing class (Poisson per node), not with PacketSocket applications.
+  8. **Packet fate**: round robin cannot see losses, so a packet with no activity for 120 s (`packetTtlS`) is classed `TTL_EXPIRED` (a ground-truth loss); younger unresolved packets are "in flight" and excluded from the PDR denominator.
+  9. **Collisions** are counted as PHY error events minus known PER losses, per node, not per frame type (the PHY does not say why it dropped a frame).
+  10. **Mobility field** is a stand-in (CONFIRM E10) because the pilot was not supplied.
+- Bugs found and fixed on the way: beacon base size was 24 B, really 25 B (caught by the ns-3 buffer assertion; now covered by the header test); the runner refactor dropped `SetSeed/SetRun` so seeds were ignored (caught by the determinism test); the `params` column of summary.csv contained the output path, breaking byte-identical output (now excluded).
+
 ## 2026-11-04 23:00 — D2 PHY/channel: SNR-based reception, shadowing, energy fixes
 - What: new `acoustic-link-model.{h,cc}`, `gm-shadowing.{h,cc}`, `cb-ergr-propagation.{h,cc}`, `helper/cb-ergr-helper.{h,cc}`, `examples/link-per-curve.cc`, `scripts/plot_per_curve.py`; upstream patches P1-P4 (see PATCHES.md); 3 new tests (airtime, link budget, shadowing).
 - Why: spec §4.1, §4.3-§4.5, kickoff §4 D2. Upstream reception ignores distance and power (CONFIRM D2), so a subclass of the propagation model decides each frame by PER.

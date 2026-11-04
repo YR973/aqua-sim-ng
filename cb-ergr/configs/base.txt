@@ -1,0 +1,11 @@
+# configs/base.txt: the base scenario of the thesis (ERGR-EMHC-g). Values equal the defaults in
+# model/cb-ergr-params.h; this file exists so a run can name its settings explicitly, and as the
+# template to copy for experiments:  --ConfigFile=configs/base.txt
+Selector = RoundRobin
+N = 250
+NumSinks = 4
+SimTimeS = 20000
+WarmupS = 2000
+CellSizeM = 750
+HeadsPerCell = 2
+CurrentSpeed = 1.0

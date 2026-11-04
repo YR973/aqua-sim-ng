@@ -11,6 +11,7 @@
 #include "ns3/aqua-sim-channel.h"
 #include "ns3/aqua-sim-net-device.h"
 #include "ns3/cb-ergr-propagation.h"
+#include "ns3/metrics-collector.h"
 
 namespace ns3
 {
@@ -36,6 +37,12 @@ class CbErgrHelper
 
     /// Per-device settings that have no helper attribute (modulation bit rate).
     static void ConfigureDevice(Ptr<AquaSimNetDevice> device, double bitRateBps);
+
+    /// Send every link decision of the channel (PER losses) to the metrics collector.
+    static void ConnectLinkTrace(Ptr<CbErgrPropagation> propagation, Ptr<MetricsCollector> metrics);
+
+    /// Count PHY error events of one node (collisions, half-duplex) in the metrics collector.
+    static void ConnectPhyTrace(Ptr<AquaSimNetDevice> device, Ptr<MetricsCollector> metrics, uint32_t nodeId);
 };
 
 } // namespace cbergr

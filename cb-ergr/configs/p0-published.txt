@@ -1,0 +1,7 @@
+# configs/p0-published.txt: "P0" = ERGR-EMHC with the published settings (K§2.5): one head per cell and the
+# paper's cell side R/sqrt(3). Only the settings that exist in this code are changed; the published
+# election rule and neighbour set are NOT reproduced yet (CONFIRM A1-A3, A6), so treat this as an
+# approximation of P0 until the supervisor answers Q1-Q2.
+Selector = RoundRobin
+CellSizeM = 866
+HeadsPerCell = 1

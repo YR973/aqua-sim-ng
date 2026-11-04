@@ -10,13 +10,14 @@ built with ns-3.41.
 
 ## 1. Upstream file changes
 
-All patches are guarded by a PHY Attribute that defaults to **false = upstream behaviour**, except the pure bookkeeping in P4 (no behaviour change). `CbErgrHelper::ConfigureHelper` turns P1-P3 on for CB-ERGR runs. The four files use CRLF line endings; edits preserve them.
+All patches are guarded by a PHY Attribute that defaults to **false = upstream behaviour**, except the pure bookkeeping in P4 (no behaviour change). `CbErgrHelper::ConfigureHelper` turns P1-P3 on (P5 is turned on by the helper too) for CB-ERGR runs. The four files use CRLF line endings; edits preserve them.
 
 | # | File | Change | Guard | Spec | Step |
 |---|---|---|---|---|---|
 | P1 | `model/aqua-sim-phy-cmn.{h,cc}` | `CalcTxTime` used `Time::FromInteger(Preamble(), Time::S)`, which truncates a fractional preamble to whole seconds. With `ExactPreamble` it uses `Seconds(Preamble())`. Also removed the `inline` keyword from the `CalcTxTime`/`CalcPktSize` declarations: they are defined in the .cc, so other libraries (our tests) could not link to them. | `ExactPreamble` (PhyCmn) | §4.1 | D2 |
 | P2 | `model/aqua-sim-phy-cmn.cc` | `PrevalidateIncomingPkt` charged receive energy for `asHeader.GetTxTime()`, but the channel has overwritten that field with the **propagation delay**, so upstream charges Rx energy for the delay (about 0.3 s at 450 m) instead of the frame airtime. With `RxEnergyUsesAirtime` it charges `CalcTxTime(size)`. | `RxEnergyUsesAirtime` | §4.3, K§2.2 | D2 |
 | P3 | `model/aqua-sim-phy-cmn.cc` | `StampTxInfo` overwrote the energy model's TxPower with the **acoustic** Pt (`m_pT`, 0.2818 W) on every frame, so Tx energy was Pt x airtime. With `KeepEnergyTxPower` the configured electrical TxPower (2.0 W) is kept. | `KeepEnergyTxPower` | §4.3 | D2 |
+| P5 | `model/aqua-sim-phy-cmn.{h,cc}` | `PrevalidateIncomingPkt` had the check "receiver is transmitting" commented out ("DISABLE THIS FOR PURE MAC TESTS"), so a node could receive while sending. With `EnforceHalfDuplex` a frame that arrives while the node transmits is marked erroneous (it is lost but still costs Rx energy). | `EnforceHalfDuplex` | §4.4 | D3 |
 | P4 | `model/aqua-sim-energy-model.{h,cc}` | Bookkeeping only: joules drawn per state (`GetTxEnergyJ/GetRxEnergyJ/GetIdleEnergyJ`) and time the battery first reached 0 (`GetDeathTimeS`, -1 while alive). `DecrEnergy` (used by `StatusShift`) is counted as Tx. | none (no behaviour change) | §4.3, K§2.2 | D2 |
 
 Not an upstream change: SNR-based reception is the new subclass `cbergr::CbErgrPropagation` (`model/cb-ergr-propagation.*`), selected by `AquaSimChannelHelper::SetPropagation`. It reports each frame's fate to the unchanged PHY through the received-power field (1 = decodable, 0 = below `RXThresh = 0.5`), so Aqua-Sim's own collision, half-duplex and energy logic still apply.
@@ -25,8 +26,8 @@ Planned:
 
 | # | File | Change | Guard | Spec |
 |---|---|---|---|---|
-| P5 | `model/aqua-sim-phy-cmn.{h,cc}` | `TxPowerLevelTag` read at transmit time: Pt, Tx energy and source level per frame (D7, optional per K§2.3) | tag present | §4.2 |
-| P6 | `model/aqua-sim-phy-cmn.cc` | Header-first receive N-A (D7, behind `HeaderFirstRx`) | `HeaderFirstRx` | D§4.2 |
+| P6 | `model/aqua-sim-phy-cmn.{h,cc}` | `TxPowerLevelTag` read at transmit time: Pt, Tx energy and source level per frame (D7, optional per K§2.3) | tag present | §4.2 |
+| P7 | `model/aqua-sim-phy-cmn.cc` | Header-first receive N-A (D7, behind `HeaderFirstRx`) | `HeaderFirstRx` | D§4.2 |
 
 ## 2. API names checked against the source (spec §0.3)
 

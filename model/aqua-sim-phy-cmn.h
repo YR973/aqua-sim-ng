@@ -203,6 +203,7 @@ private:
   bool m_exactPreamble = false;        // P1: do not truncate Preamble to whole seconds
   bool m_rxEnergyUsesAirtime = false;  // P2: charge Rx energy for the frame airtime, not the propagation delay
   bool m_keepEnergyTxPower = false;    // P3: do not overwrite the energy model's TxPower with the acoustic Pt
+  bool m_enforceHalfDuplex = false;    // P5: a frame arriving while this node transmits is lost
 
 }; //AquaSimPhyCmn
 
