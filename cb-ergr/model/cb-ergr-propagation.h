@@ -24,6 +24,7 @@
 #include "ns3/traced-callback.h"
 
 #include <functional>
+#include <map>
 #include <memory>
 
 namespace ns3
@@ -53,6 +54,10 @@ class CbErgrPropagation : public AquaSimPropagation
     /// Uses 2 ns-3 random streams; returns how many.
     int64_t AssignStreams(int64_t stream);
 
+    /// Signal-to-noise ratio (dB) a receiver measured on the last decodable BEACON from a given sender.
+    /// This is what a modem can measure (RSSI); it is not ground truth about the future.
+    bool MeasuredBeaconSnrDb(uint32_t txNode, uint32_t rxNode, double& snrDb) const;
+
     /// Test hook: return true to lose a frame (sender node, receiver node, frame type).
     void SetFrameFilter(std::function<bool(uint32_t, uint32_t, uint8_t)> filter) { m_filter = filter; }
 
@@ -74,6 +79,7 @@ class CbErgrPropagation : public AquaSimPropagation
     Ptr<UniformRandomVariable> m_extraLossDraw;
 
     std::unique_ptr<AcousticLinkModel> m_link;
+    std::map<uint64_t, double> m_beaconSnr;   ///< (tx << 32 | rx) -> SNR of the last decodable beacon
     Ptr<GmShadowing> m_shadowing;
     Ptr<UniformRandomVariable> m_lossDraw;
 

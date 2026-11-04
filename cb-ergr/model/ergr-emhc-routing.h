@@ -27,6 +27,7 @@
 #include "ns3/mobility-model.h"
 #include "ns3/random-variable-stream.h"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -47,6 +48,10 @@ class ErgrEmhcRouting : public AquaSimRouting
     void SetSelector(Ptr<ForwarderSelector> selector) { m_selector = selector; }
     void SetMetrics(Ptr<MetricsCollector> metrics) { m_metrics = metrics; }
     void SetLocalisation(Ptr<LocalisationNoise> noise) { m_localisation = noise; }
+    /// The node's own modem link budget (for selectors that predict margins).
+    void SetLinkModel(std::shared_ptr<const AcousticLinkModel> link) { m_linkModel = link; }
+    /// Source of measured beacon SNR (RSSI): (sender node, my node, snr out) -> found?
+    void SetSnrMeter(std::function<bool(uint32_t, uint32_t, double&)> meter) { m_snrMeter = meter; }
 
     /// Schedule beacons, elections and traffic. Call once at time 0.
     void Start();
@@ -176,6 +181,8 @@ class ErgrEmhcRouting : public AquaSimRouting
 
     mutable std::unique_ptr<GridGeometry> m_grid; ///< built on first use (attributes are set after construction)
     Ptr<ForwarderSelector> m_selector;
+    std::shared_ptr<const AcousticLinkModel> m_linkModel;
+    std::function<bool(uint32_t, uint32_t, double&)> m_snrMeter;
     Ptr<MetricsCollector> m_metrics;
     Ptr<LocalisationNoise> m_localisation;
     Ptr<UniformRandomVariable> m_uniform;

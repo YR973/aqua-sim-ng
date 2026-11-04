@@ -12,6 +12,7 @@ build_lib(
         model/neighbour-table.cc
         model/forwarder-selector.cc
         model/selector-round-robin.cc
+        model/selector-cb-v5.cc
         model/localisation-noise.cc
         model/current-drift-mobility.cc
         model/metrics-collector.cc
@@ -36,6 +37,7 @@ build_lib(
         model/neighbour-table.h
         model/forwarder-selector.h
         model/selector-round-robin.h
+        model/selector-cb-v5.h
         model/localisation-noise.h
         model/current-drift-mobility.h
         model/metrics-collector.h

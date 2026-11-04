@@ -131,6 +131,18 @@ class CbLearnerModel
 
     // --- Sharing ---
 
+    /// Overwrite thetaHat (used when a new head starts from the cell prior).
+    void SetTheta(const VecD& theta) { m_theta = theta; }
+
+    /// log det of the node's OWN precision (spec §8.10: decides when a blob is worth sending).
+    double LogDetOwn() const
+    {
+        MatD copy = m_A;
+        MatD L;
+        CholeskyWithFallback(copy, L, m_cfg.lambda0);
+        return LogDetFromChol(L);
+    }
+
     /// Cell prior thetaCell: the value forgetting decays toward (spec §8.3, §8.10).
     void SetCellPrior(const VecD& thetaCell) { m_thetaCell = thetaCell; }
     const VecD& CellPrior() const { return m_thetaCell; }
@@ -261,10 +273,30 @@ struct PeerBlob
 };
 
 /**
- * Spec §8.10: combine accepted peer blobs into thetaCell.
- * A peer k is accepted if this node is still immature (trace(A_self) < matureTrace) or its
- * theta points the same way as ours (cosine > cosGate). Accepted thetas are averaged with
- * weight s_k = sum(diagA_k). Returns false (and leaves 'out' alone) if nobody is accepted.
+ * Spec §8.10: is a peer's model accepted? Yes if this node is still immature (trace(A_self) < matureTrace)
+ * or the peer's theta points the same way as ours (cosine > cosGate).
+ */
+template <int D>
+bool
+IsPeerAccepted(const Vec<D>& thetaSelf,
+               double traceSelf,
+               const PeerBlob<D>& peer,
+               double matureTrace,
+               double cosGate)
+{
+    double normSelf = thetaSelf.Norm();
+    double normPeer = peer.theta.Norm();
+    double cosine = 0.0;
+    if (normSelf > 0.0 && normPeer > 0.0)
+    {
+        cosine = thetaSelf.Dot(peer.theta) / (normSelf * normPeer);
+    }
+    return (traceSelf < matureTrace) || (cosine > cosGate);
+}
+
+/**
+ * Spec §8.10: combine accepted peer blobs into thetaCell, an average of the accepted thetas weighted by
+ * s_k = sum(diagA_k). Returns false (and leaves 'out' alone) if nobody is accepted.
  */
 template <int D>
 bool
@@ -279,15 +311,7 @@ ComputeCellPrior(const Vec<D>& thetaSelf,
     double weightSum = 0.0;
     for (const PeerBlob<D>& peer : peers)
     {
-        double normSelf = thetaSelf.Norm();
-        double normPeer = peer.theta.Norm();
-        double cosine = 0.0;
-        if (normSelf > 0.0 && normPeer > 0.0)
-        {
-            cosine = thetaSelf.Dot(peer.theta) / (normSelf * normPeer);
-        }
-        bool accepted = (traceSelf < matureTrace) || (cosine > cosGate);
-        if (!accepted)
+        if (!IsPeerAccepted(thetaSelf, traceSelf, peer, matureTrace, cosGate))
         {
             continue;
         }

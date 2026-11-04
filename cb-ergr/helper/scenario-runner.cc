@@ -12,6 +12,7 @@
 #include "ns3/ergr-emhc-routing.h"
 #include "ns3/localisation-noise.h"
 #include "ns3/mobility-module.h"
+#include "ns3/selector-cb-v5.h"
 #include "ns3/network-module.h"
 
 #include <chrono>
@@ -194,7 +195,6 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetNodeRole(isSink);
         routing->SetMetrics(metrics);
         routing->SetLocalisation(localisation);
-        stream += routing->AssignStreams(stream);
 
         ObjectFactory selectorFactory;
         selectorFactory.SetTypeId("ns3::cbergr::Selector" + s.selector);
@@ -208,6 +208,11 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
             }
         }
         routing->SetSelector(selectorFactory.Create<ForwarderSelector>());
+        routing->SetLinkModel(std::make_shared<AcousticLinkModel>(propagation->GetLinkModel()));
+        routing->SetSnrMeter([propagation](uint32_t tx, uint32_t rx, double& snr) {
+            return propagation->MeasuredBeaconSnrDb(tx, rx, snr);
+        });
+        stream += routing->AssignStreams(stream); // after the selector is set, so it gets streams too
 
         metrics->RegisterNode(node->GetId(), isSink, device->GetPhy()->EM());
         routings.push_back(routing);

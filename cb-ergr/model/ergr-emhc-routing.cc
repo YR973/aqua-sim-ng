@@ -194,7 +194,12 @@ ErgrEmhcRouting::AssignStreams(int64_t stream)
 {
     m_uniform->SetStream(stream);
     m_interArrival->SetStream(stream + 1);
-    return 2;
+    int64_t used = 2;
+    if (m_selector)
+    {
+        used += m_selector->AssignStreams(stream + used);
+    }
+    return used;
 }
 
 void
@@ -274,6 +279,20 @@ ErgrEmhcRouting::Start()
         };
         hooks.drop = [this](const HeldPacket& held, DropReason reason) { Drop(held, reason); };
         m_feedback = std::make_unique<FeedbackManager>(fc, m_selector, m_metrics, hooks);
+    }
+    {
+        SelectorServices services;
+        services.nodeId = m_id;
+        services.beaconPeriodS = m_beaconPeriodS;
+        services.link = m_linkModel;
+        Ptr<AquaSimPhyCmn> phy = DynamicCast<AquaSimPhyCmn>(GetNetDevice()->GetPhy());
+        services.initialEnergyJ = GetNetDevice()->GetPhy()->EM()->GetInitialEnergy();
+        services.residualEnergyJ = [this]() { return GetNetDevice()->GetPhy()->EM()->GetEnergy(); };
+        services.airtimeS = [phy](uint32_t bytes) { return phy->CalcTxTime(bytes).GetSeconds(); };
+        services.cellId = [this]() { return m_cell; };
+        services.isHead = [this]() { return m_isHead; };
+        m_selector->SetServices(services);
+        m_selector->Start();
     }
     UpdateSelfEstimate();
     UpdateOwnCell();
@@ -436,6 +455,7 @@ ErgrEmhcRouting::SendBeacon()
         hdr.receipts = m_feedback->BuildReceipts(Simulator::Now());
     }
 
+    m_selector->OnBeaconTx(hdr, Simulator::Now()); // may attach a model blob (spec §8.10)
     Ptr<Packet> packet = Create<Packet>(0);
     packet->AddHeader(hdr);
     TransmitFrame(packet, FrameType::Beacon, kNone, params::phy::kNumPowerLevels - 1);
@@ -453,12 +473,24 @@ ErgrEmhcRouting::ExpireNeighbours()
             headsBefore.insert(entry.first);
         }
     }
+    std::set<uint16_t> headsAnywhere;
+    for (const auto& entry : m_table.Rows())
+    {
+        if (entry.second.isHead)
+        {
+            headsAnywhere.insert(entry.first);
+        }
+    }
     Time timeout = Seconds(m_neighbourTimeoutBeacons * m_beaconPeriodS);
     std::vector<uint16_t> removed = m_table.Expire(Simulator::Now(), timeout);
     bool lostOwnCellHead = false;
     for (uint16_t id : removed)
     {
-        m_selector->OnKnownChange(ChangeEvent::NodeLost, Simulator::Now());
+        if (headsBefore.count(id) > 0 || headsAnywhere.count(id) > 0)
+        {
+            // Only the loss of a head counts as a known change (K§2.3); D6 refines this to deaths.
+            m_selector->OnKnownChange(ChangeEvent::NodeLost, Simulator::Now());
+        }
         lostOwnCellHead = lostOwnCellHead || headsBefore.count(id) > 0;
     }
     if (lostOwnCellHead && !m_isSink)
@@ -483,6 +515,12 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
     entry.battery = hdr.battery / 255.0;
     entry.queueLen = hdr.queueLen;
     entry.nextBeaconIn = Seconds(hdr.nextBeaconDs / 10.0);
+    double snrDb = 0.0;
+    if (m_snrMeter && m_snrMeter(hdr.nodeId, m_id, snrDb))
+    {
+        entry.lastSnrDb = snrDb;   // measured on this beacon (MarginFromRssi, K§2.3)
+        entry.hasSnr = true;
+    }
 
     bool wasHeadInMyCell = false;
     if (const NeighbourEntry* old = m_table.Find(hdr.nodeId))
@@ -490,6 +528,7 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
         wasHeadInMyCell = old->isHead && old->cellId == m_cell;
     }
     TableUpdateResult result = m_table.Update(entry);
+    m_selector->OnBeaconRx(hdr, Simulator::Now());
     if (m_feedback)
     {
         m_feedback->OnBeaconReceipts(hdr); // label pending attempts to this node from its receipt list
@@ -823,6 +862,7 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
     ctx.myPos = EstimatedPosition();
     ctx.myVel = m_estVel;
     ctx.myBattery = ResidualFraction();
+    ctx.myEnergyJ = GetNetDevice()->GetPhy()->EM()->GetEnergy();
     ctx.dataBytes = m_payloadBytes + 17;
     Decision decision = m_selector->Select(ctx, eligible, now);
     if (!decision.valid)

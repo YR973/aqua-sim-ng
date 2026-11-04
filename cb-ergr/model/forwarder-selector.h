@@ -7,6 +7,8 @@
 #ifndef CB_ERGR_FORWARDER_SELECTOR_H
 #define CB_ERGR_FORWARDER_SELECTOR_H
 
+#include "acoustic-link-model.h"
+#include "ergr-headers.h"
 #include "neighbour-table.h"
 
 #include "ns3/nstime.h"
@@ -14,6 +16,8 @@
 #include "ns3/vector.h"
 
 #include <array>
+#include <functional>
+#include <memory>
 #include <cstdint>
 #include <vector>
 
@@ -94,10 +98,39 @@ enum class ChangeEvent
     OwnCellChanged
 };
 
+/// What a selector may ask its node for. Everything here is something a real modem/node knows;
+/// nothing is ground truth (K§0 rule 7).
+struct SelectorServices
+{
+    uint16_t nodeId = 0;
+    double beaconPeriodS = 0.0;
+    double initialEnergyJ = 0.0;
+    std::shared_ptr<const AcousticLinkModel> link;        ///< link budget of the node's own modem
+    std::function<double()> residualEnergyJ;              ///< own battery
+    std::function<double(uint32_t)> airtimeS;             ///< airtime of a frame of this many bytes
+    std::function<uint16_t()> cellId;                     ///< own cell
+    std::function<bool()> isHead;                         ///< currently a head?
+};
+
 class ForwarderSelector : public Object
 {
   public:
     static TypeId GetTypeId();
+
+    /// Called once before Start() so the selector can reach its node's services.
+    virtual void SetServices(const SelectorServices& services) {}
+
+    /// Called at time 0 (start timers here).
+    virtual void Start() {}
+
+    /// Use ns-3 random streams starting at 'stream'; returns how many were used.
+    virtual int64_t AssignStreams(int64_t stream) { return 0; }
+
+    /// Spec §5.3: may attach a model blob to the node's own beacon.
+    virtual void OnBeaconTx(ErgrBeaconHeader& beacon, Time now) {}
+
+    /// Spec §5.3: a beacon from another node arrived (may carry a model blob).
+    virtual void OnBeaconRx(const ErgrBeaconHeader& beacon, Time now) {}
 
     /// Pick the forwarder (and power, ACK request) for one packet among the eligible heads.
     virtual Decision Select(const PacketCtx& pkt,

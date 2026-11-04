@@ -2,6 +2,28 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 14:00 — D5 SelectorCbV5: Thompson-sampling forwarder selection, ACK gate, energy price, sharing
+- What: new `selector-cb-v5.{h,cc}`; the `SelectorServices` interface and beacon hooks on `ForwarderSelector`; `CbErgrPropagation::MeasuredBeaconSnrDb`; `ErgrEmhcRouting::SetLinkModel/SetSnrMeter`; additions to `cb-learner-model.h` (`SetTheta`, `LogDetOwn`, `IsPeerAccepted`); `scripts/compare_smoke.py`; 5 new tests (feature builder = spec test 6, score, ACK gate, learning, sharing; 32 cases pass).
+- Why: kickoff §4 D5 and spec §8. Power is off by default, lifetime price on, sharing on, AckMode Gated, `MarginFromRssi` on (K§2.3).
+- Effect on results: first CB-vs-RR numbers (below). No tuning.
+- Spec/design deviation:
+  1. **`NodeLost` now fires only when the lost row was a head.** Reason: K§2.3 allows covariance inflation only on a death or unplanned head loss; a table timeout of an ordinary member is neither. A head that merely moved out of range is still counted (the proxy until D6's suspect/dead detection).
+  2. **`MarginFromRssi` uses the SNR measured on the candidate's last decodable beacon** (the receiver records it from the channel's link decision) plus the power-level offset, minus the SNR needed for PER 0.1. This is receiver-side information (what a modem measures); the learner never sees the true shadowing or any future value.
+  3. **The sharing blob carries diag(A_own - lambda0 I) and thetaHat** (quantised), and a received blob is used only if the sender is in the same cell and passes the maturity/cosine gate; the stored evidence of each source ages with the same forgetting (K§2.3 incremental sharing).
+  4. `chosen_rank` in decisions.csv is the rank of the chosen option by its **mean** predicted success (1 = best), so it shows how often Thompson sampling explores; it is not the rank by score.
+  5. Optional 10th feature (`OnwardFeature`) is not built; D = 9 only.
+- Smoke result (training seeds 101-103, N = 100, 2500 s, warm-up 500 s, 1 m/s, E0 = 10000 J, mean over seeds; `results/reference/d5-smoke/`):
+  | rate | method | PDR | attempts | delay (s) | energy/delivered (J) |
+  |---|---|---|---|---|---|
+  | 0.004 | RR (published) | 0.288 | 1327 | 3.0 | 109 |
+  | 0.004 | RR + feedback | 0.483 | 4092 | 7.7 | 105 |
+  | 0.004 | CB | 0.520 | 3693 | 6.6 | 90 |
+  | 0.02 | RR | 0.153 | 5798 | 2.5 | 76 |
+  | 0.02 | RR + feedback | 0.167 | 16983 | 6.3 | 115 |
+  | 0.02 | CB | 0.202 | 16345 | 5.5 | 94 |
+  CB beats RR and RR+FB on every seed at both loads. Most of the gain over published RR comes from the feedback and retransmission (RR+FB), CB adds 3-4 PDR points on top and uses ~10-20% less energy per delivered packet than RR+FB.
+- Things that did NOT show an effect (reported, not tuned): the ACK gate (`AckMode=Gated` vs `Every` give identical results, AR rate 1.0: the model width stays above TauW = 0.3 because each head sees too few decisions in 2000 s) and sharing (`EnableSharing=false` gives PDR 0.205 vs 0.202 at 0.02 pkt/s). So claim N2 and N3 are not supported by these short runs; longer runs (20000 s, N = 250) and the N-A/N-C energy flags are needed before judging them.
+
 ## 2026-11-05 08:00 — D4 feedback: ACKs, receipt bitmaps, retries, ground truth, links/decisions CSVs
 - What: new `feedback-manager.{h,cc}`, `held-packet.h`; routing now sends DATA with random-start hop sequence numbers, ACK timers, ACK frames, receipts in beacons and retries; `MetricsCollector` gained attempt/label/ground-truth hooks, `links.csv`, `decisions.csv` (with `hop_seq`), label statistics in `summary.csv`, new columns in `nodes.csv`, and the attempt consistency check (tracked = labels + pending + discarded). RoundRobin got `WithFeedback` and `AckRequest` attributes; scenario got `SelectorAttributes`. Test hooks: `ForceRole`, `InjectPacket`, `AutoElection`, `CbErgrPropagation::SetFrameFilter` and `ExtraLossProbability`. Tests 12 and 13 added (27 cases pass).
 - Why: kickoff §4 D4 and spec §9. Gives every learner the same delayed, censored 0/1 labels, with no label ever coming from silence.

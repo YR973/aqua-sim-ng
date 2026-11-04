@@ -114,6 +114,18 @@ CbErgrPropagation::CbErgrPropagation()
     m_lossDraw = CreateObject<UniformRandomVariable>();
 }
 
+bool
+CbErgrPropagation::MeasuredBeaconSnrDb(uint32_t txNode, uint32_t rxNode, double& snrDb) const
+{
+    auto it = m_beaconSnr.find((static_cast<uint64_t>(txNode) << 32) | rxNode);
+    if (it == m_beaconSnr.end())
+    {
+        return false;
+    }
+    snrDb = it->second;
+    return true;
+}
+
 int64_t
 CbErgrPropagation::AssignStreams(int64_t stream)
 {
@@ -202,6 +214,10 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
         if (decodable && m_filter && m_filter(senderId, receiverId, frameType))
         {
             decodable = false; // deterministic loss chosen by a test
+        }
+        if (decodable && frameType == static_cast<uint8_t>(FrameType::Beacon))
+        {
+            m_beaconSnr[(static_cast<uint64_t>(senderId) << 32) | receiverId] = snrDb;
         }
         m_linkEval(senderId, receiverId, distanceM, snrDb, per, decodable, frameBytes, frameType);
 

@@ -11,6 +11,7 @@
 #include "ns3/cb-ergr-helper.h"
 #include "ns3/ergr-emhc-routing.h"
 #include "ns3/mobility-module.h"
+#include "ns3/selector-cb-v5.h"
 #include "ns3/selector-round-robin.h"
 #include "ns3/aqua-sim-phy-cmn.h"
 #include "ns3/boolean.h"
@@ -1403,6 +1404,289 @@ class LostAckGivesTimeoutLabelAndDeduplicatedRetry : public TestCase
     }
 };
 
+
+// ============================================================ D5 ===========
+
+namespace
+{
+// A CB selector with a default link model and a fixed airtime, without a simulator.
+Ptr<SelectorCbV5>
+MakeCbSelector(const std::string& attributes, uint16_t nodeId = 1, uint16_t cell = 5)
+{
+    ObjectFactory factory;
+    factory.SetTypeId("ns3::cbergr::SelectorCbV5");
+    std::stringstream ss(attributes);
+    for (std::string item; std::getline(ss, item, ';');)
+    {
+        size_t eq = item.find('=');
+        factory.Set(item.substr(0, eq), StringValue(item.substr(eq + 1)));
+    }
+    Ptr<SelectorCbV5> sel = factory.Create<SelectorCbV5>();
+    SelectorServices services;
+    services.nodeId = nodeId;
+    services.beaconPeriodS = 50.0;
+    services.initialEnergyJ = 300.0;
+    services.link = std::make_shared<AcousticLinkModel>();
+    services.residualEnergyJ = []() { return 300.0; };
+    services.airtimeS = [](uint32_t bytes) { return 0.1 + bytes * 8.0 / 5000.0; };
+    services.cellId = [cell]() { return cell; };
+    services.isHead = []() { return true; };
+    sel->SetServices(services);
+    return sel;
+}
+
+PacketCtx
+MakeCtx()
+{
+    PacketCtx ctx;
+    ctx.key = E2EKey{7, 1};
+    ctx.hpkt = 3;
+    ctx.myHmin = 3;
+    ctx.myPos = Vector(1000, 1000, 2000);
+    ctx.myVel = Vector(0, 0, 0);
+    ctx.myBattery = 0.9;
+    ctx.dataBytes = 167;
+    return ctx;
+}
+
+NeighbourEntry
+MakeNeighbour(uint16_t id, double snrDb)
+{
+    NeighbourEntry nb;
+    nb.id = id;
+    nb.pos = Vector(1300, 1000, 1500);   // 300 m east, 500 m shallower than the sender
+    nb.vel = Vector(-1.0, 0, 0);         // moving toward the sender
+    nb.hmin = 2;
+    nb.battery = 0.8;
+    nb.queueLen = 4;
+    nb.beaconTime = Seconds(1000);
+    nb.firstHeard = Seconds(700);
+    nb.lastSnrDb = snrDb;
+    nb.hasSnr = true;
+    nb.isHead = true;
+    return nb;
+}
+} // namespace
+
+// Spec test 6 (§8.1): features of a fixed neighbour row, computed by hand.
+class FeaturesMatchHandComputedValues : public TestCase
+{
+  public:
+    FeaturesMatchHandComputedValues()
+        : TestCase("D5 test6: BuildFeatures on a fixed row (hand-computed x1..x9)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorCbV5> sel = MakeCbSelector("MarginFromRssi=true");
+        AcousticLinkModel link;
+        PacketCtx ctx = MakeCtx();
+        double snrReq = link.SnrReqDb(ctx.dataBytes);
+        NeighbourEntry nb = MakeNeighbour(9, snrReq + 5.0); // beacon SNR 5 dB above what data needs
+        Time now = Seconds(1000);                           // beacon just received: no extrapolation
+
+        auto x = sel->BuildFeatures(ctx, nb, 2, now);
+        const double distance = std::sqrt(300.0 * 300.0 + 500.0 * 500.0);              // 583.095 m
+        const double closing = 300.0 / distance;                                         // -d|r|/dt, v_rel = (-1,0,0)
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[0], distance / 1500.0, 1e-9, "x1 distance");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[1], 1.0, 1e-12, "x2 progress: hmin 2 < hpkt 3");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[2], ((2000.0 - 1500.0) / 1500.0 + 1.0) / 2.0, 1e-9, "x3 depth advantage");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[3], 0.8, 1e-12, "x4 battery");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[4], 0.3, 1e-12, "x5 age: 300 s / 1000 s");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[5], 0.4, 1e-12, "x6 queue: 4 / 10");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[6], (closing / 2.0 + 1.0) / 2.0, 1e-9, "x7 closing speed");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[7], (5.0 + 10.0) / 30.0, 1e-9, "x8 margin 5 dB at full power");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[8], 1.0, 1e-12, "x9 intercept");
+
+        // Only x8 depends on the power level: the lowest level is 6 dB weaker.
+        auto xLow = sel->BuildFeatures(ctx, nb, 0, now);
+        NS_TEST_ASSERT_MSG_EQ_TOL(xLow[7], (5.0 - 6.0 + 10.0) / 30.0, 1e-9, "x8 at level 0");
+        for (int i = 0; i < 9; ++i)
+        {
+            if (i != 7)
+            {
+                NS_TEST_ASSERT_MSG_EQ_TOL(xLow[i], x[i], 1e-12, "other features unchanged by power");
+            }
+        }
+        // Everything stays in [0, 1], also for an extreme neighbour.
+        NeighbourEntry far = MakeNeighbour(10, -100.0);
+        far.pos = Vector(9000, 9000, 9000);
+        far.battery = 3.0;
+        far.queueLen = 255;
+        auto xf = sel->BuildFeatures(ctx, far, 2, now);
+        for (int i = 0; i < 9; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ((xf[i] >= 0.0 && xf[i] <= 1.0), true, "feature " << i << " clipped to [0,1]");
+        }
+
+        // Without RSSI the margin comes from the model at the predicted distance (spec §8.2, no shadowing).
+        Ptr<SelectorCbV5> modelOnly = MakeCbSelector("MarginFromRssi=false");
+        double expectedMargin = link.MarginDb(link.FullSourceLevelDb(), distance, ctx.dataBytes);
+        NS_TEST_ASSERT_MSG_EQ_TOL(modelOnly->PredictedMarginDb(ctx, nb, 2, now), expectedMargin, 1e-9, "model margin");
+        // The beacon position drifts with its velocity: after 100 s the neighbour has moved 100 m west.
+        auto later = sel->BuildFeatures(ctx, nb, 2, Seconds(1100));
+        NS_TEST_ASSERT_MSG_EQ((later[0] < x[0]), true, "predicted distance shrinks as it approaches");
+    }
+};
+
+// Spec §8.5: the score, with and without the lifetime terms.
+class ScoreCombinesSuccessProgressAndEnergy : public TestCase
+{
+  public:
+    ScoreCombinesSuccessProgressAndEnergy()
+        : TestCase("D5: score = p * progress - lambda * Etx - mu * phi(battery)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorCbV5> sel = MakeCbSelector("EnableLifetime=true;Mu=0.1;KappaP=0.5");
+        SelectorCbV5::Features x;
+        x[1] = 1.0;                                         // makes progress
+        NS_TEST_ASSERT_MSG_EQ_TOL(sel->Score(0.8, x, 2.0, 0.8), 0.8 * 1.0 - 0.1 * 0.25, 1e-12,
+                                  "no price yet (lambda 0); phi(0.8) = 0.25");
+        x[1] = 0.0;                                         // no progress: weight 1 - 0.5
+        NS_TEST_ASSERT_MSG_EQ_TOL(sel->Score(0.8, x, 2.0, 0.8), 0.8 * 0.5 - 0.1 * 0.25, 1e-12, "no progress");
+        NS_TEST_ASSERT_MSG_EQ_TOL(sel->Score(0.8, x, 2.0, 1.0), 0.4, 1e-12, "full battery has no penalty");
+        NS_TEST_ASSERT_MSG_EQ_TOL(sel->Score(0.8, x, 2.0, 0.0), 0.4 - 0.1 * 99.0, 1e-9, "empty battery clamps at 0.01");
+
+        Ptr<SelectorCbV5> off = MakeCbSelector("EnableLifetime=false");
+        NS_TEST_ASSERT_MSG_EQ_TOL(off->Score(0.8, x, 2.0, 0.3), 0.4, 1e-12, "lifetime off: no energy terms");
+    }
+};
+
+// Spec §8.6: when an ACK is requested, in each mode.
+class AckGateFollowsTheModeAndUncertainty : public TestCase
+{
+  public:
+    AckGateFollowsTheModeAndUncertainty()
+        : TestCase("D5: NeedsAck in Every, BitmapOnly and Gated modes")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        PacketCtx first = MakeCtx();            // attempt 1, hpkt == myHmin: not a priority packet
+        PacketCtx retry = MakeCtx();
+        retry.attempt = 2;
+        PacketCtx priority = MakeCtx();
+        priority.hpkt = 4;                      // hpkt > myHmin
+
+        Ptr<SelectorCbV5> every = MakeCbSelector("AckMode=Every");
+        NS_TEST_ASSERT_MSG_EQ(every->NeedsAck(first, 0.0), true, "Every: always");
+
+        Ptr<SelectorCbV5> bitmap = MakeCbSelector("AckMode=BitmapOnly");
+        NS_TEST_ASSERT_MSG_EQ(bitmap->NeedsAck(first, 9.9), false, "BitmapOnly: not on first attempts");
+        NS_TEST_ASSERT_MSG_EQ(bitmap->NeedsAck(retry, 0.0), true, "BitmapOnly: retries ask");
+
+        Ptr<SelectorCbV5> gated = MakeCbSelector("AckMode=Gated;QAudit=0;TauW=0.3");
+        NS_TEST_ASSERT_MSG_EQ(gated->NeedsAck(first, 0.1), false, "confident, no audit: no ACK");
+        NS_TEST_ASSERT_MSG_EQ(gated->NeedsAck(first, 0.31), true, "unsure (width > TauW)");
+        NS_TEST_ASSERT_MSG_EQ(gated->NeedsAck(retry, 0.0), true, "retry");
+        NS_TEST_ASSERT_MSG_EQ(gated->NeedsAck(priority, 0.0), true, "priority packet");
+
+        Ptr<SelectorCbV5> audit = MakeCbSelector("AckMode=Gated;QAudit=1");
+        NS_TEST_ASSERT_MSG_EQ(audit->NeedsAck(first, 0.0), true, "QAudit = 1 audits every attempt");
+    }
+};
+
+// The learner end to end (without the simulator): it discovers which candidate's link works.
+class CbLearnsToPreferTheReliableLink : public TestCase
+{
+  public:
+    CbLearnsToPreferTheReliableLink()
+        : TestCase("D5: Select + OnSent + OnLabel learn to prefer the reliable link")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorCbV5> sel = MakeCbSelector("EnableLifetime=false;AckMode=Every");
+        sel->AssignStreams(500);
+        AcousticLinkModel link;
+        PacketCtx ctx = MakeCtx();
+        double snrReq = link.SnrReqDb(ctx.dataBytes);
+        NeighbourEntry good = MakeNeighbour(11, snrReq + 15.0);   // strong link
+        NeighbourEntry bad = MakeNeighbour(12, snrReq - 12.0);    // weak link, everything else equal
+        std::vector<Candidate> eligible = {{11, &good}, {12, &bad}};
+
+        std::mt19937 gen(99);
+        std::uniform_real_distribution<double> coin(0.0, 1.0);
+        int goodInLast100 = 0;
+        for (int n = 0; n < 400; ++n)
+        {
+            Time now = Seconds(1000 + 5.0 * n);
+            Decision d = sel->Select(ctx, eligible, now);
+            NS_TEST_ASSERT_MSG_EQ(d.valid, true, "a decision is made");
+            sel->OnSent(d, now);
+            double pTrue = (d.fwdId == 11) ? 0.95 : 0.15;
+            sel->OnLabel(d, coin(gen) < pTrue ? 1 : 0, LabelSource::Ack, now + Seconds(2));
+            goodInLast100 += (n >= 300 && d.fwdId == 11);
+        }
+        NS_TEST_ASSERT_MSG_EQ((goodInLast100 > 85), true, "chooses the reliable link > 85% of the time (" << goodInLast100 << ")");
+        NS_TEST_ASSERT_MSG_EQ((sel->Model().TraceOwn() > 9.0 + 5.0), true, "evidence accumulated");
+    }
+};
+
+// Sharing (spec §8.10, K§2.3): a head's model reaches its co-head on a beacon and counts once.
+class SharedModelRaisesTheCoHeadsConfidence : public TestCase
+{
+  public:
+    SharedModelRaisesTheCoHeadsConfidence()
+        : TestCase("D5: model blob on a beacon is received by the co-head and not double counted")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorCbV5> a = MakeCbSelector("EnableLifetime=false", 1, 5);
+        Ptr<SelectorCbV5> b = MakeCbSelector("EnableLifetime=false", 2, 5);
+        AcousticLinkModel link;
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry nb = MakeNeighbour(11, link.SnrReqDb(ctx.dataBytes) + 10.0);
+        std::vector<Candidate> eligible = {{11, &nb}};
+        for (int n = 0; n < 40; ++n)
+        {
+            Time now = Seconds(1000 + n);
+            Decision d = a->Select(ctx, eligible, now);
+            a->OnSent(d, now);
+            a->OnLabel(d, 1, LabelSource::Ack, now);
+        }
+        ErgrBeaconHeader beacon;
+        beacon.nodeId = 1;
+        beacon.cellId = 5;
+        a->OnBeaconTx(beacon, Seconds(1040));
+        NS_TEST_ASSERT_MSG_EQ(beacon.hasBlob, true, "enough new evidence: a blob is attached");
+        ErgrBeaconHeader again;
+        again.nodeId = 1;
+        again.cellId = 5;
+        a->OnBeaconTx(again, Seconds(1041));
+        NS_TEST_ASSERT_MSG_EQ(again.hasBlob, false, "no new evidence since the last blob: none attached");
+
+        b->OnBeaconRx(beacon, Seconds(1040));
+        b->Select(ctx, eligible, Seconds(1040));
+        double effectiveOnce = b->Model().EffectivePrecision().Trace();
+        NS_TEST_ASSERT_MSG_EQ((effectiveOnce > b->Model().TraceOwn() + 1.0), true, "the co-head's evidence counts");
+        b->OnBeaconRx(beacon, Seconds(1040));       // the same message again
+        double effectiveTwice = b->Model().EffectivePrecision().Trace();
+        NS_TEST_ASSERT_MSG_EQ_TOL(effectiveTwice, effectiveOnce, 1e-9, "a repeated blob is not counted twice");
+
+        // A blob from another cell is ignored.
+        Ptr<SelectorCbV5> c = MakeCbSelector("EnableLifetime=false", 3, 6);
+        c->OnBeaconRx(beacon, Seconds(1040));
+        NS_TEST_ASSERT_MSG_EQ_TOL(c->Model().EffectivePrecision().Trace(), c->Model().TraceOwn(), 1e-12,
+                                  "other cell: ignored");
+        // Quantisation: the received theta is within one step (1/1024) of the sender's.
+        NS_TEST_ASSERT_MSG_EQ_TOL(b->Model().CellPrior()[7], a->Model().Theta()[7], 1.0 / 1024.0, "theta within quantisation");
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -1436,6 +1720,11 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new SameSeedGivesIdenticalOutput, TestCase::QUICK);
         AddTestCase(new ForcedLossGivesOneLabelPerAttempt, TestCase::QUICK);
         AddTestCase(new LostAckGivesTimeoutLabelAndDeduplicatedRetry, TestCase::QUICK);
+        AddTestCase(new FeaturesMatchHandComputedValues, TestCase::QUICK);
+        AddTestCase(new ScoreCombinesSuccessProgressAndEnergy, TestCase::QUICK);
+        AddTestCase(new AckGateFollowsTheModeAndUncertainty, TestCase::QUICK);
+        AddTestCase(new CbLearnsToPreferTheReliableLink, TestCase::QUICK);
+        AddTestCase(new SharedModelRaisesTheCoHeadsConfidence, TestCase::QUICK);
     }
 };
 
