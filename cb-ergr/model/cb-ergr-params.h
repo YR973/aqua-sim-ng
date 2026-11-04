@@ -169,6 +169,22 @@ constexpr bool kOnwardFeature = false;   // [DESIGN] K§2.3 (D = 10 if true)
 namespace selector
 {
 constexpr bool kRoundRobinWithFeedback = false; // [SPEC] S§9.1: published ERGR-EMHC has no hop ACKs
+// Q-learning (QELAR-style), spec S§11 B2 [CONFIRM C1]
+constexpr double kQlAlpha = 0.3;
+constexpr double kQlGamma = 0.8;
+constexpr double kQlEpsilon = 0.1;
+constexpr double kQlStepCost = 0.1;        // reward = success - cost
+constexpr double kQlHminBonus = 0.1;       // initial Q = 1 + bonus * (myHmin - hmin_j)
+constexpr double kQlValueScale = 0.001;    // advertised value is sent as int16 in units of this
+// CARP-style EWMA of hop success, S§11 B3
+constexpr double kCarpBeta = 0.2;
+constexpr double kCarpInitial = 0.5;
+// Linear function-approximation Q, S§11 B4
+constexpr double kLfaStep = 0.05;
+constexpr double kLfaEpsilon = 0.1;
+constexpr double kLfaGamma = 0.8;
+// Fixed-weight selector (K§2.4 FW): hand-set logistic weights on x1..x9; see selector-fixed-weight.cc
+constexpr std::array<double, 9> kFwWeights = {-0.4, 0.5, 0.8, 0.2, 0.1, -0.2, 0.2, 9.0, -3.0};
 } // namespace selector
 
 // --------------------------------------------------------------- price ----

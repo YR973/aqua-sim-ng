@@ -194,7 +194,7 @@ ErgrBeaconHeader::BlobBytes() const
 uint32_t
 ErgrBeaconHeader::GetSerializedSize() const
 {
-    return BaseBytes() + ReceiptBytes() + BlobBytes();
+    return BaseBytes() + ReceiptBytes() + BlobBytes() + QBytes();
 }
 
 void
@@ -217,7 +217,7 @@ ErgrBeaconHeader::Serialize(Buffer::Iterator i) const
     i.WriteU8(queueLen);
     i.WriteHtonU16(nextBeaconDs);
     i.WriteU8(static_cast<uint8_t>(receipts.size()));
-    i.WriteU8(hasBlob ? 1 : 0);
+    i.WriteU8(static_cast<uint8_t>((hasBlob ? 1 : 0) | (hasQ ? 2 : 0))); // flag byte: bit0 blob, bit1 Q value
     for (const ReceiptEntry& r : receipts)
     {
         i.WriteHtonU16(r.senderId);
@@ -234,6 +234,10 @@ ErgrBeaconHeader::Serialize(Buffer::Iterator i) const
         {
             i.WriteHtonU16(blob.diagA[k]);
         }
+    }
+    if (hasQ)
+    {
+        i.WriteHtonU16(static_cast<uint16_t>(qValue));
     }
 }
 
@@ -257,7 +261,9 @@ ErgrBeaconHeader::Deserialize(Buffer::Iterator i)
     queueLen = i.ReadU8();
     nextBeaconDs = i.ReadNtohU16();
     uint8_t nReceipts = i.ReadU8();
-    hasBlob = i.ReadU8() != 0;
+    uint8_t flags = i.ReadU8();
+    hasBlob = (flags & 1) != 0;
+    hasQ = (flags & 2) != 0;
     receipts.clear();
     for (uint8_t n = 0; n < nReceipts; ++n)
     {
@@ -277,6 +283,10 @@ ErgrBeaconHeader::Deserialize(Buffer::Iterator i)
         {
             blob.diagA[k] = i.ReadNtohU16();
         }
+    }
+    if (hasQ)
+    {
+        qValue = static_cast<int16_t>(i.ReadNtohU16());
     }
     return GetSerializedSize();
 }

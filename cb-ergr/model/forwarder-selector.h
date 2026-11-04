@@ -74,6 +74,7 @@ struct Decision
     double pMean = 0.0;         ///< predicted success (for logging)
     double width = 0.0;         ///< model uncertainty (for logging)
     double score = 0.0;
+    double aux = 0.0;           ///< selector-specific number kept with the decision (e.g. Q-learning next-state value)
     double lambdaE = 0.0;       ///< energy price at decision time (logging)
     uint8_t numCandidates = 0; ///< how many eligible heads there were
     uint8_t chosenRank = 0;    ///< rank of the chosen one by score (1 = best), 0 if not scored

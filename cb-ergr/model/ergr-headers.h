@@ -142,6 +142,9 @@ class ErgrBeaconHeader : public Header
     std::vector<ReceiptEntry> receipts;
     bool hasBlob = false;
     ModelBlob blob;
+    bool hasQ = false;        ///< Q-learning methods advertise their state value (+2 B)
+    int16_t qValue = 0;       ///< value in units of params::selector::kQlValueScale
+    uint32_t QBytes() const { return hasQ ? 2 : 0; }
 };
 
 // -------------------------------------------------------------- ELECTION ---

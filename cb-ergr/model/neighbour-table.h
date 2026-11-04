@@ -36,6 +36,8 @@ struct NeighbourEntry
     double battery = 1.0;     ///< residual energy fraction 0..1
     uint8_t queueLen = 0;
     Time nextBeaconIn;        ///< interval it advertised (N-C)
+    bool hasQ = false;        ///< the node advertised a state value (Q-learning methods)
+    double advertisedQ = 0.0; ///< that value
     double lastSnrDb = 0.0;   ///< measured SNR of its last beacon (MarginFromRssi, K§2.3)
     bool hasSnr = false;
 

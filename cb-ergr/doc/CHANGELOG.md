@@ -2,6 +2,26 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 18:00 — D6a baselines: FixedWeight, QLearning, CarpEwma, LfaQ; shared feature builder
+- What: new `cb-features.{h,cc}` (the 9 features, moved out of `SelectorCbV5` unchanged), `selector-fixed-weight`, `selector-q-learning`, `selector-carp-ewma`, `selector-lfa-q`; optional 2-byte value on beacons (`hasQ`); `Decision::aux`, `NeighbourEntry::advertisedQ`; 4 tests (36 cases pass); more variants in `scripts/compare_smoke.py`.
+- Why: kickoff §2.4 and §4 D6. All use the same eligibility, feedback manager and overhead accounting.
+- Effect on results: new rows in the comparison; CB itself is unchanged (refactor checked by the existing tests).
+- Spec/design deviation:
+  1. **FW weights are hand-set** (`params::selector::kFwWeights`), chosen from the physics (long distance bad, high SNR margin very good, shallower and closer to the sink good, long queue bad). They were set before looking at any result and never tuned, but they are not independent of what the author knows about the channel. The supervisor should decide a policy for them (hand-set vs the offline fit of A1).
+  2. **QL and LinQ advertise their value on every beacon** (+2 B each, counted in `ctrl_bytes_beacon`); QL uses Q = 1 + 0.1 (myHmin - hmin_j) for untried forwarders; sinks are terminal (value 0). All CONFIRM C1.
+  3. **CARP uses bitmap feedback** (no ACK on first attempts; retries ask), which is why its delay is very large (labels and retries wait for the next beacon or the 150 s expiry).
+- Result (training seeds 101-103, N = 100, 2500 s, 1 m/s, E0 = 10000 J, 0.004 pkt/s; means; `results/reference/d5-smoke/compare_all_rate0.004.csv`):
+  | method | PDR | attempts | delay (s) | energy/delivered (J) |
+  |---|---|---|---|---|
+  | RR (published) | 0.288 | 1327 | 3.0 | 109 |
+  | RR + feedback | 0.483 | 4092 | 7.7 | 105 |
+  | QL | 0.435 | 4200 | 7.9 | 113 |
+  | LinQ | 0.462 | 3892 | 6.9 | 102 |
+  | CARP | 0.517 | 3936 | 117.8 | 99 |
+  | CB | 0.520 | 3693 | 6.6 | 90 |
+  | **FW (no learning)** | **0.552** | 3227 | 5.5 | 82 |
+- **Honest reading:** a fixed, physically sensible weight vector on the CB features is as good as or better than CB over 2000 s, and about equal over 12500 s (CB 0.532, FW 0.527, RR+FB 0.485; 2 seeds). Most of CB's gain over RR+FB therefore comes from the features (above all the measured link margin), not from learning the weights online. This does not yet support claim N1 as "learning beats a good static rule". What would: a cold FW that is wrong (e.g. different channel), non-stationary links, larger N and longer runs, or the offline-fitted A1 as the principled static baseline. Not tuned; reported as is. See CONFIRM E22.
+
 ## 2026-11-05 14:00 — D5 SelectorCbV5: Thompson-sampling forwarder selection, ACK gate, energy price, sharing
 - What: new `selector-cb-v5.{h,cc}`; the `SelectorServices` interface and beacon hooks on `ForwarderSelector`; `CbErgrPropagation::MeasuredBeaconSnrDb`; `ErgrEmhcRouting::SetLinkModel/SetSnrMeter`; additions to `cb-learner-model.h` (`SetTheta`, `LogDetOwn`, `IsPeerAccepted`); `scripts/compare_smoke.py`; 5 new tests (feature builder = spec test 6, score, ACK gate, learning, sharing; 32 cases pass).
 - Why: kickoff §4 D5 and spec §8. Power is off by default, lifetime price on, sharing on, AckMode Gated, `MarginFromRssi` on (K§2.3).

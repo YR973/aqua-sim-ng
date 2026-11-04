@@ -16,6 +16,10 @@ VARIANTS = {
     "CB": ("CbV5", ""),
     "CB-ackEvery": ("CbV5", "AckMode=Every"),
     "CB-noShare": ("CbV5", "EnableSharing=false"),
+    "FW": ("FixedWeight", ""),
+    "QL": ("QLearning", ""),
+    "CARP": ("CarpEwma", ""),
+    "LinQ": ("LfaQ", ""),
 }
 COLUMNS = ["pdr", "delay_mean_s", "attempts_total", "retx_per_delivered", "hop_success_truth", "ar_rate",
            "ack_frames_per_delivered", "label_ack_frac", "false_negative_rate",

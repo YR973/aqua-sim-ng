@@ -11,7 +11,11 @@
 #include "ns3/cb-ergr-helper.h"
 #include "ns3/ergr-emhc-routing.h"
 #include "ns3/mobility-module.h"
+#include "ns3/selector-carp-ewma.h"
 #include "ns3/selector-cb-v5.h"
+#include "ns3/selector-fixed-weight.h"
+#include "ns3/selector-lfa-q.h"
+#include "ns3/selector-q-learning.h"
 #include "ns3/selector-round-robin.h"
 #include "ns3/aqua-sim-phy-cmn.h"
 #include "ns3/boolean.h"
@@ -1687,6 +1691,187 @@ class SharedModelRaisesTheCoHeadsConfidence : public TestCase
     }
 };
 
+
+// ============================================================ D6 ===========
+
+namespace
+{
+template <typename T>
+Ptr<T>
+MakeBaseline(const std::string& typeName, const std::string& attributes)
+{
+    ObjectFactory factory;
+    factory.SetTypeId(typeName);
+    std::stringstream ss(attributes);
+    for (std::string item; std::getline(ss, item, ';');)
+    {
+        size_t eq = item.find('=');
+        factory.Set(item.substr(0, eq), StringValue(item.substr(eq + 1)));
+    }
+    Ptr<T> sel = factory.Create<T>();
+    SelectorServices services;
+    services.nodeId = 1;
+    services.beaconPeriodS = 50.0;
+    services.link = std::make_shared<AcousticLinkModel>();
+    services.airtimeS = [](uint32_t bytes) { return 0.1 + bytes * 8.0 / 5000.0; };
+    sel->SetServices(services);
+    return sel;
+}
+} // namespace
+
+// FW (K§2.4): fixed weights prefer the link with the larger SNR margin, never learn, and ask for ACKs.
+class FixedWeightPrefersTheBetterLinkAndNeverLearns : public TestCase
+{
+  public:
+    FixedWeightPrefersTheBetterLinkAndNeverLearns()
+        : TestCase("D6: FW picks the stronger link and does not change with labels")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorFixedWeight> fw = MakeBaseline<SelectorFixedWeight>("ns3::cbergr::SelectorFixedWeight", "");
+        AcousticLinkModel link;
+        PacketCtx ctx = MakeCtx();
+        double snrReq = link.SnrReqDb(ctx.dataBytes);
+        NeighbourEntry good = MakeNeighbour(11, snrReq + 12.0);
+        NeighbourEntry bad = MakeNeighbour(12, snrReq - 8.0);
+        std::vector<Candidate> eligible = {{12, &bad}, {11, &good}};
+        Decision d = fw->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ(int(d.fwdId), 11, "stronger link wins");
+        NS_TEST_ASSERT_MSG_EQ(d.ackRequest, true, "FW asks for ACKs like CB with AckMode=Every");
+        NS_TEST_ASSERT_MSG_EQ((d.pMean > 0.0 && d.pMean < 1.0), true, "a probability");
+        for (int n = 0; n < 50; ++n)
+        {
+            fw->OnLabel(d, 0, LabelSource::Ack, Seconds(1001 + n)); // bad news changes nothing
+        }
+        NS_TEST_ASSERT_MSG_EQ(int(fw->Select(ctx, eligible, Seconds(2000)).fwdId), 11, "same choice after labels");
+    }
+};
+
+// CARP (§11 B3): EWMA update rule, choice by EWMA times progress, no ACK on first attempts.
+class CarpEwmaFollowsItsUpdateRule : public TestCase
+{
+  public:
+    CarpEwmaFollowsItsUpdateRule()
+        : TestCase("D6: CARP EWMA update and choice")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorCarpEwma> carp = MakeBaseline<SelectorCarpEwma>("ns3::cbergr::SelectorCarpEwma", "Beta=0.2;Initial=0.5");
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry a = MakeNeighbour(21, 0.0);
+        NeighbourEntry b = MakeNeighbour(22, 0.0);
+        std::vector<Candidate> eligible = {{21, &a}, {22, &b}};
+        Decision d = carp->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ(d.ackRequest, false, "CARP style: no ACK on first attempts");
+        NS_TEST_ASSERT_MSG_EQ(int(d.fwdId), 21, "tie: lower id");
+        Decision toA;
+        toA.fwdId = 21;
+        carp->OnLabel(toA, 0, LabelSource::Bitmap, Seconds(1001));
+        NS_TEST_ASSERT_MSG_EQ_TOL(carp->Ewma(21), 0.8 * 0.5 + 0.2 * 0.0, 1e-12, "EWMA after a 0");
+        NS_TEST_ASSERT_MSG_EQ_TOL(carp->Ewma(22), 0.5, 1e-12, "untouched");
+        NS_TEST_ASSERT_MSG_EQ(int(carp->Select(ctx, eligible, Seconds(1002)).fwdId), 22, "moves to the better one");
+        carp->OnLabel(toA, 1, LabelSource::Bitmap, Seconds(1003));
+        NS_TEST_ASSERT_MSG_EQ_TOL(carp->Ewma(21), 0.8 * 0.4 + 0.2 * 1.0, 1e-12, "EWMA after a 1");
+    }
+};
+
+// QL (§11 B2): Q update with the advertised next-state value, terminal sinks, value advertised on the beacon.
+class QLearningUpdatesAndAdvertisesItsValue : public TestCase
+{
+  public:
+    QLearningUpdatesAndAdvertisesItsValue()
+        : TestCase("D6: Q-learning update rule, terminal sink and beacon value (+2 B)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorQLearning> ql =
+            MakeBaseline<SelectorQLearning>("ns3::cbergr::SelectorQLearning", "Epsilon=0;Alpha=0.3;Gamma=0.8;StepCost=0.1");
+        ql->AssignStreams(900);
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry relay = MakeNeighbour(31, 0.0);
+        relay.hasQ = true;
+        relay.advertisedQ = 0.9;
+        NeighbourEntry sink = MakeNeighbour(32, 0.0);
+        sink.isSink = true;
+        sink.hmin = 0;
+        std::vector<Candidate> eligible = {{31, &relay}, {32, &sink}};
+
+        Decision d = ql->Select(ctx, eligible, Seconds(1000));
+        // Initial Q = 1 + 0.1 * (myHmin 3 - hmin_j): relay (hmin 2) = 1.1, sink (hmin 0) = 1.3.
+        NS_TEST_ASSERT_MSG_EQ(int(d.fwdId), 32, "initial guess prefers the sink (lower Hmin)");
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.score, 1.3, 1e-12, "value used");
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.aux, 0.0, 1e-12, "a sink is terminal: next value 0");
+        ql->OnLabel(d, 0, LabelSource::AckTimeout, Seconds(1002));
+        // Q <- 1.3 + 0.3 * ((0 - 0.1) + 0.8 * 0 - 1.3) = 0.88
+        NS_TEST_ASSERT_MSG_EQ_TOL(ql->Q(32), 1.3 + 0.3 * (-0.1 - 1.3), 1e-12, "update after a failure");
+
+        Decision toRelay;
+        toRelay.fwdId = 31;
+        toRelay.score = 1.1;
+        toRelay.aux = 0.9;
+        ql->OnLabel(toRelay, 1, LabelSource::Ack, Seconds(1003));
+        // target = (1 - 0.1) + 0.8 * 0.9 = 1.62; Q <- 1.1 + 0.3 * (1.62 - 1.1) = 1.256
+        NS_TEST_ASSERT_MSG_EQ_TOL(ql->Q(31), 1.1 + 0.3 * (1.62 - 1.1), 1e-12, "update with next-state value");
+
+        ErgrBeaconHeader beacon;
+        ql->Select(ctx, eligible, Seconds(1004));
+        ql->OnBeaconTx(beacon, Seconds(1005));
+        NS_TEST_ASSERT_MSG_EQ(beacon.hasQ, true, "the value rides on the beacon");
+        NS_TEST_ASSERT_MSG_EQ(beacon.QBytes(), 2u, "two bytes of overhead");
+        ErgrBeaconHeader plain;
+        NS_TEST_ASSERT_MSG_EQ(beacon.GetSerializedSize(), plain.GetSerializedSize() + 2, "counted in the size");
+        Ptr<Packet> p = Create<Packet>(0);
+        p->AddHeader(beacon);
+        ErgrBeaconHeader back;
+        p->RemoveHeader(back);
+        NS_TEST_ASSERT_MSG_EQ(back.hasQ, true, "survives a round trip");
+        NS_TEST_ASSERT_MSG_EQ(int(back.qValue), int(beacon.qValue), "value");
+    }
+};
+
+// LinQ (§11 B4): semi-gradient TD(0) on the CB features.
+class LinearQMovesItsWeightsTowardTheTarget : public TestCase
+{
+  public:
+    LinearQMovesItsWeightsTowardTheTarget()
+        : TestCase("D6: LinQ TD(0) weight update")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorLfaQ> lfa =
+            MakeBaseline<SelectorLfaQ>("ns3::cbergr::SelectorLfaQ", "Epsilon=0;Step=0.05;Gamma=0.8;StepCost=0.1");
+        lfa->AssignStreams(901);
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry nb = MakeNeighbour(41, 0.0);
+        nb.hasQ = true;
+        nb.advertisedQ = 0.5;
+        std::vector<Candidate> eligible = {{41, &nb}};
+        Decision d = lfa->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.score, 0.0, 1e-12, "weights start at zero");
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.aux, 0.5, 1e-12, "advertised next-state value");
+        lfa->OnLabel(d, 1, LabelSource::Ack, Seconds(1002));
+        // target = (1 - 0.1) + 0.8 * 0.5 = 1.3; error = 1.3 - 0 = 1.3; w = 0.05 * 1.3 * x
+        for (int i = 0; i < 9; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ_TOL(lfa->Weights()[i], 0.05 * 1.3 * d.x[i], 1e-12, "w_" << i);
+        }
+        Decision again = lfa->Select(ctx, eligible, Seconds(1003));
+        NS_TEST_ASSERT_MSG_EQ((again.score > d.score), true, "the value of the same option rose");
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -1725,6 +1910,10 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new AckGateFollowsTheModeAndUncertainty, TestCase::QUICK);
         AddTestCase(new CbLearnsToPreferTheReliableLink, TestCase::QUICK);
         AddTestCase(new SharedModelRaisesTheCoHeadsConfidence, TestCase::QUICK);
+        AddTestCase(new FixedWeightPrefersTheBetterLinkAndNeverLearns, TestCase::QUICK);
+        AddTestCase(new CarpEwmaFollowsItsUpdateRule, TestCase::QUICK);
+        AddTestCase(new QLearningUpdatesAndAdvertisesItsValue, TestCase::QUICK);
+        AddTestCase(new LinearQMovesItsWeightsTowardTheTarget, TestCase::QUICK);
     }
 };
 

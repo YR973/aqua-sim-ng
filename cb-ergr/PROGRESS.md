@@ -2,7 +2,7 @@
 
 ## Environment
 - Workspace: `/home/user/ws/ns-3-dev` (ns-3.41, official git tag; the tarball is blocked here). `src/aqua-sim-ng` -> this repo, `contrib/cb-ergr` -> `cb-ergr/`. `cb-ergr/scripts/setup_ns3.sh` recreates it.
-- Build: `cd ns-3-dev && cmake --build cmake-cache -j4` (or `./ns3 build`). Tests: `./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose` (32 cases, all pass).
+- Build: `cd ns-3-dev && cmake --build cmake-cache -j4` (or `./ns3 build`). Tests: `./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose` (36 cases, all pass).
 - Run: `./build/contrib/cb-ergr/ns3.41-cb-ergr-scenario-debug --ConfigFile=... --OutDir=...` (see CODE-GUIDE §5).
 - Missing inputs: the pilot `cb_ergr_pilot.py` was never supplied (link model and current field are from the spec formulas / a stand-in, CONFIRM E8, E10). The design doc v5.2 was given only as chat text; it is not in `docs/` yet.
 - The four upstream files we patch use CRLF line endings; edit them with a script that preserves them.
@@ -16,6 +16,8 @@
 - D4 feedback: `FeedbackManager` (pending table, ACK timer -> label 0 at once, receipt bitmaps, expiry, retries with fresh hopSeq), ACK frames, ground truth in the metrics only, `links.csv`, `decisions.csv`, label statistics, attempt consistency check; tests 12 and 13. First feedback numbers (RR+FB, N=100, 0.004 pkt/s, 1500 s, seed 1): PDR 0.44 vs 0.27-0.29 without; 5.6 attempts per packet; labels 22% by ACK, 78% by ACK timeout; ground-truth hop success 0.35; false-negative rate 0.16; label delay mean 2.5 s. Label 1 was never wrong in the line test (58 of 58 truly received).
 
 - D5 `SelectorCbV5`: features, Thompson sampling, score, ACK gate, send-time evidence, label update, dual price timer, blob sharing; tests 6 + selector behaviour. Smoke comparison on training seeds (N=100, E0=10000 J, 1 m/s): PDR 0.520 (CB) vs 0.483 (RR+FB) vs 0.288 (RR) at 0.004 pkt/s, and 0.202 vs 0.167 vs 0.153 at 0.02 pkt/s; CB wins on every seed. The ACK gate and sharing showed no effect at this scale (CONFIRM E21). Details in CHANGELOG.
+
+- D6a baselines FW, QL, CARP, LinQ (+ shared `FeatureBuilder`). **Key finding:** hand-set fixed weights (FW) match or beat CB at N=100 (PDR 0.552 vs 0.520 over 2500 s; 0.527 vs 0.532 over 12500 s), so CB's gain over RR+FB is mostly the features, not the online learning (CONFIRM E22). QL 0.435 and LinQ 0.462 are below RR+FB-with-features.
 
 ## Calibration findings (D3 deliverable; RoundRobin, seed 1, training-style runs, no tuning)
 | Run | PDR | Rx share of energy | First node dead | Half nodes dead |

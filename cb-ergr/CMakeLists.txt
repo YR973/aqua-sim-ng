@@ -12,6 +12,11 @@ build_lib(
         model/neighbour-table.cc
         model/forwarder-selector.cc
         model/selector-round-robin.cc
+        model/cb-features.cc
+        model/selector-fixed-weight.cc
+        model/selector-carp-ewma.cc
+        model/selector-q-learning.cc
+        model/selector-lfa-q.cc
         model/selector-cb-v5.cc
         model/localisation-noise.cc
         model/current-drift-mobility.cc
@@ -37,6 +42,11 @@ build_lib(
         model/neighbour-table.h
         model/forwarder-selector.h
         model/selector-round-robin.h
+        model/cb-features.h
+        model/selector-fixed-weight.h
+        model/selector-carp-ewma.h
+        model/selector-q-learning.h
+        model/selector-lfa-q.h
         model/selector-cb-v5.h
         model/localisation-noise.h
         model/current-drift-mobility.h

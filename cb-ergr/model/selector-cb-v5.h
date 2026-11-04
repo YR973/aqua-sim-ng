@@ -17,6 +17,7 @@
 #ifndef CB_ERGR_SELECTOR_CB_V5_H
 #define CB_ERGR_SELECTOR_CB_V5_H
 
+#include "cb-features.h"
 #include "cb-learner-model.h"
 #include "energy-price.h"
 #include "forwarder-selector.h"
@@ -107,6 +108,7 @@ class SelectorCbV5 : public ForwarderSelector
     double m_txPowerFullW;
 
     SelectorServices m_services;
+    std::unique_ptr<FeatureBuilder> m_features;
     CbLearnerModel<kDim> m_model;
     std::unique_ptr<EnergyPrice> m_price;
     double m_logdetAtLastSync = 0.0;

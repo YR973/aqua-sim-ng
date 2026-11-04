@@ -307,7 +307,6 @@ ErgrEmhcRouting::Start()
             Simulator::Schedule(Seconds(m_firstElectionS + m_cell * m_electionOffsetPerCellS),
                                 &ErgrEmhcRouting::OnElectionEpoch, this);
         }
-        double electionAt = m_firstElectionS + m_cell * m_electionOffsetPerCellS;
         if (m_pktRateHz > 0.0)
         {
             m_interArrival->SetAttribute("Mean", DoubleValue(1.0 / m_pktRateHz));
@@ -515,6 +514,8 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
     entry.battery = hdr.battery / 255.0;
     entry.queueLen = hdr.queueLen;
     entry.nextBeaconIn = Seconds(hdr.nextBeaconDs / 10.0);
+    entry.hasQ = hdr.hasQ;
+    entry.advertisedQ = hdr.qValue * params::selector::kQlValueScale;
     double snrDb = 0.0;
     if (m_snrMeter && m_snrMeter(hdr.nodeId, m_id, snrDb))
     {
