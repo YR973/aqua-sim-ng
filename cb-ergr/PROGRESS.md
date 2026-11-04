@@ -27,6 +27,8 @@
 
 - D7c per-frame power (patch P8, tag, test 11 passes). Power ablation: lowers Tx energy 40-50% but halves PDR (0.521 -> 0.249 at 0.004 pkt/s); main results should stay forwarder-only.
 
+- D6c tooling: `run_sweep.py`, `analyse.py` (CI, plots, ablation table, recovery), `check_params.py`; CB warm start (`PriorWeights`). Design doc v5.2 is now in `docs/`.
+
 ## Calibration findings (D3 deliverable; RoundRobin, seed 1, training-style runs, no tuning)
 | Run | PDR | Rx share of energy | First node dead | Half nodes dead |
 |---|---|---|---|---|
@@ -41,11 +43,18 @@
 - Speed: N=250 takes ~35 s of wall time per 2000 s in the debug build (about 6 min for 20000 s); N=100 takes ~7 s per 1000 s.
 
 ## Next
-1. `run_sweep.py` (YAML or JSON list -> parallel runs, skips existing outputs) and `analyse.py` (mean +- 95% CI over seeds, ablation table, recovery time from `events.csv` + `decisions.csv`).
-2. (done) N-A and N-C. Next for energy: agree E0 / Rx power with the supervisor; optionally N-B (members sleep).
-3. (done) Power patch and test 11.
-4. Optional: CB warm start from the A1 weights (design P7), because static rules beat the cold-start learner over 2500 s.
-Run the 20-seed comparisons only on the test seeds 1-20 and only after the settings are frozen on training seeds 101-110.
+1. **Needs the supervisor first** (CONFIRM): E0 / load / Rx charging (E13, Q4), P0 cell size and election (A1-A3, Q1-Q2), published numbers for spec test 16 (E15), FW weight policy (E22), the pilot file (D1/E8/E10).
+2. Full-size runs once settings are frozen on training seeds 101-110: N=250, 20000 s, 20 test seeds 1-20 with `run_sweep.py` + `analyse.py` (use an optimized build: `./ns3 configure --build-profile=optimized`).
+3. Not built: N-B (members sleep), N-D early receipt, quorum-based death detection, start-up wave metrics (P6), design-P7 prior precision, optional 10th feature (onward), `Link=Linear`.
+4. Findings to take to the supervisor: static rule on CB's features (FW/A1) is about as good as the online learner at this scale (CONFIRM E22); gate and sharing show no effect yet (E21); power arm halves PDR (CHANGELOG D7c); energy is Rx-dominated (E13).
+
+## How to check everything (end-of-session checklist)
+```
+cd <ns-3>/ && cmake --build cmake-cache -j4
+./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 46 cases
+python3 -I contrib/cb-ergr/scripts/check_params.py                        # rule 11
+python3 -I contrib/cb-ergr/scripts/run_sweep.py contrib/cb-ergr/sweeps/example-speed.yaml --dry-run
+```
 
 ## Open
 - See `doc/CONFIRM.md` (A1-A13, B1-B7, C1-C3, E1-E16). Most urgent for the supervisor: Q4 (E0, load, Rx charging), Q1-Q2 (P0 cell size and election), published reference numbers for test 16.

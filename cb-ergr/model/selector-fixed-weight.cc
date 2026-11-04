@@ -34,7 +34,7 @@ SelectorFixedWeight::GetTypeId()
             .AddAttribute("KappaP", "Weight of hop progress in the score.", DoubleValue(params::learner::kKappaP),
                           MakeDoubleAccessor(&SelectorFixedWeight::m_kappaP), MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("AckRequest", "Request an ACK on every attempt (same feedback as CB with AckMode=Every).",
-                          BooleanValue(true), MakeBooleanAccessor(&SelectorFixedWeight::m_requestAck),
+                          BooleanValue(params::selector::kRequestAckOnFirstAttempt), MakeBooleanAccessor(&SelectorFixedWeight::m_requestAck),
                           MakeBooleanChecker())
             .AddAttribute("MarginFromRssi", "Use the measured beacon SNR for the margin feature.",
                           BooleanValue(params::learner::kMarginFromRssi),
@@ -115,7 +115,7 @@ SelectorFittedLogistic::GetTypeId()
                           MakeStringAccessor(&SelectorFittedLogistic::m_weightsText), MakeStringChecker())
             .AddAttribute("KappaP", "Weight of hop progress in the score.", DoubleValue(params::learner::kKappaP),
                           MakeDoubleAccessor(&SelectorFittedLogistic::m_kappaP), MakeDoubleChecker<double>(0.0, 1.0))
-            .AddAttribute("AckRequest", "Request an ACK on every attempt.", BooleanValue(true),
+            .AddAttribute("AckRequest", "Request an ACK on every attempt.", BooleanValue(params::selector::kRequestAckOnFirstAttempt),
                           MakeBooleanAccessor(&SelectorFittedLogistic::m_requestAck), MakeBooleanChecker())
             .AddAttribute("MarginFromRssi", "Use the measured beacon SNR for the margin feature.",
                           BooleanValue(params::learner::kMarginFromRssi),

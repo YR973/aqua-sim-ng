@@ -26,6 +26,7 @@
 #include "ns3/random-variable-stream.h"
 
 #include <map>
+#include <string>
 #include <vector>
 
 namespace ns3
@@ -117,6 +118,7 @@ class SelectorCbV5 : public ForwarderSelector
     double m_lambdaInit, m_eta, m_targetLifetimeS, m_priceTickS;
     double m_tauSync, m_cosGate, m_matureTrace, m_betaInflate;
     double m_handoverKeepS;
+    std::string m_priorWeightsText;   ///< warm start (D§3 P7): "w1,...,w9" from scripts/fit_a1.py, empty = cold start
     double m_txPowerFullW;
 
     SelectorServices m_services;

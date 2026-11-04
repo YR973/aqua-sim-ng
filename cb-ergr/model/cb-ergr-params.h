@@ -174,6 +174,7 @@ constexpr bool kOnwardFeature = false;   // [DESIGN] K§2.3 (D = 10 if true)
 
 namespace selector
 {
+constexpr bool kRequestAckOnFirstAttempt = true; // FW, A1, oracles, RR+FB: same feedback as CB with AckMode=Every
 constexpr bool kRoundRobinWithFeedback = false; // [SPEC] S§9.1: published ERGR-EMHC has no hop ACKs
 // Q-learning (QELAR-style), spec S§11 B2 [CONFIRM C1]
 constexpr double kQlAlpha = 0.3;

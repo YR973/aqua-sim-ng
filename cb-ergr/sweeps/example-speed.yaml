@@ -1,0 +1,12 @@
+# Example sweep: three methods against the current speed (spec §12), on training seeds, small and fast.
+# Run:  python3 scripts/run_sweep.py sweeps/example-speed.yaml --jobs 3
+binary: build/contrib/cb-ergr/ns3.41-cb-ergr-scenario-debug
+out_root: results/example-speed
+seeds: [101, 102]
+common: {N: 100, SimTimeS: 2000, WarmupS: 500, PktRatePerNodeHz: 0.004, InitialEnergyJ: 10000, LogLinks: false}
+runs:
+  - {name: RR,    selector: RoundRobin}
+  - {name: RR+FB, selector: RoundRobin, attributes: "WithFeedback=true"}
+  - {name: CB,    selector: CbV5}
+sweeps:
+  - {factor: CurrentSpeed, values: [0, 1, 2]}

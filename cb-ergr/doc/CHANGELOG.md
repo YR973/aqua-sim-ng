@@ -2,6 +2,16 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-06 14:00 — D6c tooling: run_sweep.py, analyse.py, check_params.py; CB warm start; design doc saved
+- What: `scripts/run_sweep.py` (YAML, parallel, skips finished runs, refuses test seeds 1-20 unless `--allow-test-seeds`), `scripts/analyse.py` (mean +- 95% CI with Student's t, plots against each sweep factor, ablation table, recovery time and dip depth after failure injection), `scripts/check_params.py` (writes `scripts/params.json` from the header, and fails on stale JSON or on an attribute default that is a literal instead of a `params::` value), `sweeps/example-speed.yaml`; CB attribute `PriorWeights` (warm start, design P7); `docs/cb-ergr-design-final-detailed.md` (verbatim copy of design v5.2); `kRequestAckOnFirstAttempt` in the params header.
+- Why: kickoff §4 D6 (sweep + analysis), §0 rule 11 (one home for parameters, consistency check), design P7.
+- Effect on results: none on existing runs; new variant CB-warm.
+- Spec/design deviation:
+  1. **The rule-11 checker found four real violations** (hard-coded `true` for `AckRequest` defaults in four selectors) and they were moved into the params header.
+  2. **Recovery time** is pooled over all attempts into the affected cells (per-node curves are too sparse). First version "recovered" at 0 s because the 300 s window still held pre-failure data; it now needs a dip below baseline - 5 points first, reports 0 for "never dipped" and NaN (censored) for "dipped and not yet back". With 3 seeds and 5 affected cells it is exploratory (CB 343 s, CB without sharing 83 s, RR+FB 160 s) and should not be read as a result.
+  3. **Warm start** keeps the prior precision at lambda0 (design P7 suggests 0.1 of the Laplace Hessian; not built) and sets both thetaHat and the cell prior to the fitted weights, so forgetting decays toward them.
+- Result (held-out training seeds 108-110, N = 100, 2500 s, 0.004 pkt/s; `results/reference/d5-smoke/compare_warmstart_heldout_seeds108-110.csv`): PDR FW 0.571, A1 0.567, CB-warm 0.565, CB cold 0.546, oracle 0.594; regret A1 0.047, CB-warm 0.090, CB cold 0.120. The warm start removes most of the cold-start loss; online refinement on top of the offline fit (CB-warm - A1) is -0.002 PDR here, i.e. not measurable at this scale.
+
 ## 2026-11-06 10:00 — D7c per-packet transmit power (patch P8, spec test 11) and the power ablation
 - What: `TxPowerLevelTag` (cb-ergr), PHY patch P8 (`SetTxPowerHook`), `CbErgrHelper::EnablePowerLevels`, the channel reads the tag to set the frame's source level (`SL_full + offset[level]`), routing tags DATA frames sent below full power, `InjectRawFrame` test hook; test 11 (46 cases pass).
 - Why: kickoff §2.3 / §4 D7 and spec §4.2. The gate passes, so `EnablePower` is a meaningful ablation.

@@ -1,0 +1,190 @@
+{
+ "channel": {
+  "kShadowSigmaDb": 5.0,
+  "kShadowTauS": 120.0,
+  "kShadowTickS": 5.0
+ },
+ "election": {
+  "kBeta": 0.9,
+  "kJitterMaxS": 0.1,
+  "kMembershipHysteresisM": 20.0,
+  "kSlotS": 1.0
+ },
+ "energy": {
+  "kIdlePowerW": 0.008,
+  "kInitialEnergyJ": 300.0,
+  "kRxPowerW": 0.75,
+  "kTxPowerFullW": 2.0
+ },
+ "feature": {
+  "kBaseDim": 9,
+  "kBattery": 3,
+  "kClosingSpeed": 6,
+  "kDepthAdvantage": 2,
+  "kDistance": 0,
+  "kEntryAge": 4,
+  "kHopProgress": 1,
+  "kIntercept": 8,
+  "kQueue": 5,
+  "kSnrMargin": 7
+ },
+ "grid": {
+  "kBoxSizeM": 3000.0,
+  "kCellSizeM": 750.0,
+  "kFaceOnly": false,
+  "kHeadsPerCell": 2,
+  "kPublishedCellSizeM": 866.0,
+  "kStrictProgress": true
+ },
+ "learner": {
+  "kAckWidthThreshold": 0.3,
+  "kAuditRate": 0.1,
+  "kBatteryFloor": 0.01,
+  "kCholeskyJitter": 1e-09,
+  "kCholeskyMaxRetries": 3,
+  "kEnableLifetime": true,
+  "kEnablePower": false,
+  "kEnableSharing": true,
+  "kEntryAgeScaleS": 1000.0,
+  "kExplorationScale": 1.0,
+  "kForgetGamma": 0.98,
+  "kForgetPeriodS": 60.0,
+  "kKappa": 1.0,
+  "kKappaP": 0.5,
+  "kLambda0": 1.0,
+  "kMarginFromRssi": true,
+  "kMarginOffsetDb": 10.0,
+  "kMarginScaleDb": 30.0,
+  "kMu": 0.1,
+  "kOnwardFeature": false,
+  "kQueueMax": 10.0,
+  "kSigmoidClamp": 30.0,
+  "kVMaxMps": 2.0
+ },
+ "logging": {
+  "kLogDecisions": false,
+  "kLogEvents": true,
+  "kLogFrames": false,
+  "kLogLinks": true,
+  "kLogNodeTimeline": false,
+  "kLogNodes": true,
+  "kLogPackets": true,
+  "kNodeLogIntervalS": 1000.0
+ },
+ "mobility": {
+  "kCurrentSpeedMps": 1.0,
+  "kLocErrM": 20.0,
+  "kMeanderPeriodS": 3600.0,
+  "kOuSigmaFraction": 0.3,
+  "kOuTauS": 300.0,
+  "kUpdateIntervalS": 5.0,
+  "kVelErrMps": 0.1,
+  "kVerticalDriftFactor": 0.1
+ },
+ "phy": {
+  "kBandwidthHz": 5000.0,
+  "kBitRateBps": 5000.0,
+  "kCalibFrameBytes": 150.0,
+  "kCalibPer": 0.5,
+  "kCarrierKHz": 20.0,
+  "kNumPowerLevels": 3,
+  "kPreambleS": 0.1,
+  "kReferenceAcousticPtW": 0.2818,
+  "kRxThreshold": 0.5,
+  "kShippingActivity": 0.5,
+  "kSnrReqPer": 0.1,
+  "kSourceLevelOffsetDb": [
+   -6.0,
+   -3.0,
+   0.0
+  ],
+  "kSpreadingK": 1.5,
+  "kTxPowerLevelScale": [
+   0.25,
+   0.5,
+   1.0
+  ],
+  "kTxRangeM": 1500.0,
+  "kWindSpeedMps": 5.0
+ },
+ "price": {
+  "kEta": 20.0,
+  "kLambdaInit": 0.25,
+  "kTargetLifetimeS": 100000.0
+ },
+ "scenario": {
+  "kNumNodes": 250,
+  "kNumSinks": 4,
+  "kPayloadBytes": 150,
+  "kPktRatePerNodeHz": 0.07,
+  "kRun": 1,
+  "kSeed": 1,
+  "kSimTimeS": 20000.0,
+  "kWarmupS": 2000.0
+ },
+ "selector": {
+  "kCarpBeta": 0.2,
+  "kCarpInitial": 0.5,
+  "kFwWeights": [
+   -0.4,
+   0.5,
+   0.8,
+   0.2,
+   0.1,
+   -0.2,
+   0.2,
+   9.0,
+   -3.0
+  ],
+  "kLfaEpsilon": 0.1,
+  "kLfaGamma": 0.8,
+  "kLfaStep": 0.05,
+  "kQlAlpha": 0.3,
+  "kQlEpsilon": 0.1,
+  "kQlGamma": 0.8,
+  "kQlHminBonus": 0.1,
+  "kQlStepCost": 0.1,
+  "kQlValueScale": 0.001,
+  "kRequestAckOnFirstAttempt": true,
+  "kRoundRobinWithFeedback": false
+ },
+ "sharing": {
+  "kBetaHandover": 0.7,
+  "kBetaInflate": 0.7,
+  "kCosGate": 0.5,
+  "kDiagScale": 0.0625,
+  "kMatureTrace": 50.0,
+  "kTauSync": 0.7,
+  "kThetaScale": 0.0009765625
+ },
+ "timers": {
+  "kAckGuardS": 0.2,
+  "kAckProcS": 0.05,
+  "kAckSoundSpeedMps": 1500.0,
+  "kAutoElection": true,
+  "kBeaconJitterFraction": 0.0,
+  "kBeaconPeriodS": 50.0,
+  "kBlobKeepBeacons": 10,
+  "kDataStartS": 300.0,
+  "kDuplicateCapacity": 1024,
+  "kDuplicateTtlS": 600.0,
+  "kElectionOffsetPerCellS": 2.0,
+  "kElectionPeriodS": 400.0,
+  "kExpiryBeacons": 3,
+  "kFirstElectionS": 55.0,
+  "kHandoverKeepS": 400.0,
+  "kHeaderFirstRx": false,
+  "kLeanBeacons": false,
+  "kMaxTx": 3,
+  "kNackWindowS": 8.0,
+  "kNeighbourTimeoutBeacons": 3,
+  "kPhyRxDelayAirtimes": 1.0,
+  "kPreElectionLeadS": 8.0,
+  "kPriceTickS": 600.0,
+  "kReceiptKeepBeacons": 3,
+  "kRetriesAlwaysAck": true,
+  "kSuspectTimeouts": 2,
+  "kTrickleMaxFactor": 2.0,
+  "kVoidRetryLimit": 3
+ }
+}

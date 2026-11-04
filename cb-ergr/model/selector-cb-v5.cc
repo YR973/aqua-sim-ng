@@ -7,14 +7,17 @@
 
 #include "cb-ergr-params.h"
 
+#include "ns3/abort.h"
 #include "ns3/boolean.h"
 #include "ns3/double.h"
 #include "ns3/enum.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
+#include "ns3/string.h"
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 namespace ns3
 {
@@ -106,6 +109,9 @@ SelectorCbV5::GetTypeId()
             .AddAttribute("BetaInflate", "Covariance inflation factor after a head is lost.",
                           DoubleValue(params::sharing::kBetaInflate),
                           MakeDoubleAccessor(&SelectorCbV5::m_betaInflate), MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("PriorWeights", "Warm start (D§3 P7): nine comma-separated weights used as the initial theta and as the "
+                          "cell prior the model forgets toward. Empty = cold start (theta = 0).",
+                          StringValue(""), MakeStringAccessor(&SelectorCbV5::m_priorWeightsText), MakeStringChecker())
             .AddAttribute("BetaHandover", "Scale applied to A when a head takes over WITHOUT a planned handover.",
                           DoubleValue(params::sharing::kBetaHandover),
                           MakeDoubleAccessor(&SelectorCbV5::m_betaHandover), MakeDoubleChecker<double>(0.0, 1.0))
@@ -168,6 +174,20 @@ SelectorCbV5::SetServices(const SelectorServices& services)
     cfg.lambda0 = m_lambda0;
     cfg.explorationScale = m_explorationScale;
     m_model = CbLearnerModel<kDim>(cfg);
+    if (!m_priorWeightsText.empty())
+    {
+        // Warm start: begin at (and forget toward) the offline-fitted weights; the prior precision stays lambda0.
+        Features w;
+        std::stringstream ss(m_priorWeightsText);
+        int i = 0;
+        for (std::string item; std::getline(ss, item, ',') && i < kDim; ++i)
+        {
+            w[i] = std::stod(item);
+        }
+        NS_ABORT_MSG_IF(i != kDim, "PriorWeights needs 9 comma-separated numbers");
+        m_model.SetCellPrior(w);
+        m_model.SetTheta(w);
+    }
 }
 
 void

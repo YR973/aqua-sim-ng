@@ -28,7 +28,7 @@ SelectorRoundRobin::GetTypeId()
                                           MakeBooleanChecker())
                             .AddAttribute("AckRequest",
                                           "With feedback: request an ACK on first attempts (false: labels come from receipt bitmaps).",
-                                          BooleanValue(true),
+                                          BooleanValue(params::selector::kRequestAckOnFirstAttempt),
                                           MakeBooleanAccessor(&SelectorRoundRobin::m_requestAck),
                                           MakeBooleanChecker());
     return tid;

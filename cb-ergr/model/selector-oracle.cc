@@ -27,7 +27,7 @@ SelectorOracle::GetTypeId()
                           MakeBooleanAccessor(&SelectorOracle::m_geoOnly), MakeBooleanChecker())
             .AddAttribute("KappaP", "Weight of hop progress in the utility.", DoubleValue(params::learner::kKappaP),
                           MakeDoubleAccessor(&SelectorOracle::m_kappaP), MakeDoubleChecker<double>(0.0, 1.0))
-            .AddAttribute("AckRequest", "Ask for an ACK on every attempt.", BooleanValue(true),
+            .AddAttribute("AckRequest", "Ask for an ACK on every attempt.", BooleanValue(params::selector::kRequestAckOnFirstAttempt),
                           MakeBooleanAccessor(&SelectorOracle::m_requestAck), MakeBooleanChecker());
     return tid;
 }

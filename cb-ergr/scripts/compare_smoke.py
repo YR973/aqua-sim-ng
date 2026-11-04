@@ -37,6 +37,8 @@ def a1_attributes():
 
 
 VARIANTS["A1"] = ("FittedLogistic", a1_attributes())
+# Warm start: CB that begins at (and forgets toward) the A1 weights (design P7). a1_attributes() is "Weights=w1,...,w9".
+VARIANTS["CB-warm"] = ("CbV5", a1_attributes().replace("Weights=", "PriorWeights="))
 COLUMNS = ["pdr", "energy_tx_j", "regret_mean", "regret_mean_multi_viable", "share_multi_viable", "delay_mean_s", "attempts_total", "retx_per_delivered", "hop_success_truth", "ar_rate",
            "ack_frames_per_delivered", "label_ack_frac", "false_negative_rate",
            "ctrl_bytes_total_per_delivered", "energy_per_delivered_j"]
