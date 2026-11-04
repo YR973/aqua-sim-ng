@@ -2,7 +2,7 @@
 
 ## Environment
 - Workspace: `/home/user/ws/ns-3-dev` (ns-3.41, official git tag; the tarball is blocked here). `src/aqua-sim-ng` -> this repo, `contrib/cb-ergr` -> `cb-ergr/`. `cb-ergr/scripts/setup_ns3.sh` recreates it.
-- Build: `cd ns-3-dev && cmake --build cmake-cache -j4` (or `./ns3 build`). Tests: `./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose` (42 cases, all pass).
+- Build: `cd ns-3-dev && cmake --build cmake-cache -j4` (or `./ns3 build`). Tests: `./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose` (45 cases, all pass).
 - Run: `./build/contrib/cb-ergr/ns3.41-cb-ergr-scenario-debug --ConfigFile=... --OutDir=...` (see CODE-GUIDE §5).
 - Missing inputs: the pilot `cb_ergr_pilot.py` was never supplied (link model and current field are from the spec formulas / a stand-in, CONFIRM E8, E10). The design doc v5.2 was given only as chat text; it is not in `docs/` yet.
 - The four upstream files we patch use CRLF line endings; edit them with a script that preserves them.
@@ -23,6 +23,8 @@
 
 - D7a failure handling: suspect tier, HANDOVER frames and planned/unplanned takeover, failure injection (`--KillHeadsAtS=8000 --KillHeadsCells=5`), spec test 14 and two integration tests. Recovery-time analysis still to write (`analyse.py`).
 
+- D7b `--LeanBeacons=true` / `--HeaderFirstRx=true`: with both, at N=250, 300 J, 0.004 pkt/s the first node dies at 1795 s (was 1036 s) and half the nodes survive 3000 s (was dead at 1789 s); Rx is still 86% of the energy, so E0 must still be agreed (CONFIRM E13).
+
 ## Calibration findings (D3 deliverable; RoundRobin, seed 1, training-style runs, no tuning)
 | Run | PDR | Rx share of energy | First node dead | Half nodes dead |
 |---|---|---|---|---|
@@ -38,7 +40,7 @@
 
 ## Next
 1. `run_sweep.py` (YAML or JSON list -> parallel runs, skips existing outputs) and `analyse.py` (mean +- 95% CI over seeds, ablation table, recovery time from `events.csv` + `decisions.csv`).
-2. N-A header-first receive and N-C lean beacons (flags `HeaderFirstRx`, `LeanBeacons`): **needed**, Rx is ~90% of energy and nodes die in 11-21 min at 300 J.
+2. (done) N-A and N-C. Next for energy: agree E0 / Rx power with the supervisor; optionally N-B (members sleep).
 3. Power patch (TxPowerLevelTag) and the two-node power test (spec test 11); then `EnablePower` becomes a real ablation.
 4. Optional: CB warm start from the A1 weights (design P7), because static rules beat the cold-start learner over 2500 s.
 Run the 20-seed comparisons only on the test seeds 1-20 and only after the settings are frozen on training seeds 101-110.

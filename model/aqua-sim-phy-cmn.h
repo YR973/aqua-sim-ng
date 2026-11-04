@@ -25,6 +25,7 @@
 #include <list>
 #include <map>
 #include <vector>
+#include <functional>
 
 #include "ns3/nstime.h"
 //#include "ns3/timer.h"
@@ -121,6 +122,13 @@ public:
   // Check collision status of the first received packet when net_device was in IDLE state
   virtual void CollisionCheck(Ptr<Packet> packet);
 
+  /**
+   * CB-ERGR patch P7 (header-first receive, N-A). If set, the hook is asked how long receive energy should be
+   * charged for an incoming frame that was NOT corrupted; a negative answer means "charge the whole frame"
+   * (upstream behaviour). The frame still occupies the channel for collisions. Default: no hook.
+   */
+  void SetRxEnergyTimeHook(std::function<double(Ptr<const Packet>)> hook) { m_rxEnergyTimeHook = hook; }
+
 protected:
   virtual Ptr<Packet> PrevalidateIncomingPkt(Ptr<Packet> p);
   virtual void UpdateTxEnergy(Time txTime);
@@ -203,6 +211,7 @@ private:
   bool m_exactPreamble = false;        // P1: do not truncate Preamble to whole seconds
   bool m_rxEnergyUsesAirtime = false;  // P2: charge Rx energy for the frame airtime, not the propagation delay
   bool m_keepEnergyTxPower = false;    // P3: do not overwrite the energy model's TxPower with the acoustic Pt
+  std::function<double(Ptr<const Packet>)> m_rxEnergyTimeHook;   // P7: optional per-frame receive-energy duration
   bool m_enforceHalfDuplex = false;    // P5: a frame arriving while this node transmits is lost
 
 }; //AquaSimPhyCmn

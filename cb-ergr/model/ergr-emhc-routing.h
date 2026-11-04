@@ -101,6 +101,10 @@ class ErgrEmhcRouting : public AquaSimRouting
     // --- Beacons ---
     void BeaconTick();
     void SendBeacon();
+    void SendPreElectionBeacon();
+    uint64_t StateFingerprint();
+    void UpdateTrickleInterval();
+    double AdvertisedIntervalS() const;
     void OnBeacon(const ErgrBeaconHeader& hdr);
     void ExpireNeighbours();
 
@@ -158,6 +162,8 @@ class ErgrEmhcRouting : public AquaSimRouting
     bool m_retriesAlwaysAck, m_autoElection;
     double m_expiryBeacons, m_receiptKeepBeacons;
     int m_suspectTimeouts;
+    bool m_leanBeacons;
+    double m_trickleMaxFactor, m_preElectionLeadS;
     double m_dataStartS, m_pktRateHz;
     uint32_t m_payloadBytes;
     uint32_t m_duplicateCapacity;
@@ -183,6 +189,12 @@ class ErgrEmhcRouting : public AquaSimRouting
     Time m_lastElectionTrigger = Seconds(-1e9);
     EventId m_helloEvent;
     uint32_t m_electionEpochs = 0;
+
+    // Lean beacons (N-C)
+    double m_beaconIntervalS = 0.0;     ///< current interval of a head or sink (grows while nothing changes)
+    Time m_lastBeaconTx = Seconds(-1e9);
+    uint64_t m_lastFingerprint = 0;
+    bool m_memberBeaconDue = true;      ///< a member announces itself at start-up and when it changes cell
 
     // Forwarding state
     NeighbourTable m_table;

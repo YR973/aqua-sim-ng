@@ -50,6 +50,9 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("HeadsPerCell", &s.headsPerCell, "Heads per cell (k)");
     c.Add("FaceOnly", &s.faceOnly, "Only face-adjacent cells are neighbours");
     c.Add("BeaconPeriodS", &s.beaconPeriodS, "Beacon interval (s)");
+    c.Add("LeanBeacons", &s.leanBeacons, "N-C: members beacon only before elections, head beacons stretch (Trickle style)");
+    c.Add("TrickleMaxFactor", &s.trickleMaxFactor, "Largest head beacon interval in base periods (lean mode)");
+    c.Add("HeaderFirstRx", &s.headerFirstRx, "N-A: overheard unicast data is charged preamble + header only");
     c.Add("ElectionPeriodS", &s.electionPeriodS, "Periodic election interval (s)");
     c.Add("ElectionBeta", &s.electionBeta, "Energy weight in the head score");
     c.Add("RangeM", &s.rangeM, "Transmission range R (m)");
@@ -231,6 +234,10 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         asHelper.Create(node, device);
         CbErgrHelper::ConfigureDevice(device, s.bitRateBps);
         CbErgrHelper::ConnectPhyTrace(device, metrics, node->GetId());
+        if (s.headerFirstRx)
+        {
+            CbErgrHelper::EnableHeaderFirstRx(device, node->GetId(), s.preambleS, s.bitRateBps);
+        }
         if (isSink)
         {
             device->GetPhy()->EM()->SetInitialEnergy(1e12); // sinks never run out
@@ -245,6 +252,8 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetAttribute("HeadsPerCell", UintegerValue(s.headsPerCell));
         routing->SetAttribute("FaceOnly", BooleanValue(s.faceOnly));
         routing->SetAttribute("BeaconPeriodS", DoubleValue(s.beaconPeriodS));
+        routing->SetAttribute("LeanBeacons", BooleanValue(s.leanBeacons));
+        routing->SetAttribute("TrickleMaxFactor", DoubleValue(s.trickleMaxFactor));
         routing->SetAttribute("ElectionPeriodS", DoubleValue(s.electionPeriodS));
         routing->SetAttribute("ElectionBeta", DoubleValue(s.electionBeta));
         routing->SetAttribute("PktRatePerNodeHz", DoubleValue(s.pktRateHz));

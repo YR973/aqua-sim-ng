@@ -129,6 +129,15 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("SuspectTimeouts", "Consecutive ACK timeouts before a forwarder is suspected.",
                           UintegerValue(params::timers::kSuspectTimeouts),
                           MakeUintegerAccessor(&ErgrEmhcRouting::m_suspectTimeouts), MakeUintegerChecker<int>(1))
+            .AddAttribute("LeanBeacons", "N-C: members beacon only before elections; head beacons stretch while nothing changes.",
+                          BooleanValue(params::timers::kLeanBeacons),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_leanBeacons), MakeBooleanChecker())
+            .AddAttribute("TrickleMaxFactor", "Largest beacon interval of a stable head, in base periods.",
+                          DoubleValue(params::timers::kTrickleMaxFactor),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_trickleMaxFactor), MakeDoubleChecker<double>(1.0))
+            .AddAttribute("PreElectionLeadS", "Members announce themselves this long before an election round (lean mode).",
+                          DoubleValue(params::timers::kPreElectionLeadS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_preElectionLeadS), MakeDoubleChecker<double>(0.0))
             .AddAttribute("AutoElection", "Run the head election (false only in tests that call ForceRole).",
                           BooleanValue(params::timers::kAutoElection),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_autoElection), MakeBooleanChecker())
@@ -166,6 +175,9 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_voidRetryLimit(params::timers::kVoidRetryLimit),
       m_maxTx(params::timers::kMaxTx),
       m_suspectTimeouts(params::timers::kSuspectTimeouts),
+      m_leanBeacons(params::timers::kLeanBeacons),
+      m_trickleMaxFactor(params::timers::kTrickleMaxFactor),
+      m_preElectionLeadS(params::timers::kPreElectionLeadS),
       m_ackProcS(params::timers::kAckProcS),
       m_ackGuardS(params::timers::kAckGuardS),
       m_phyRxDelayAirtimes(params::timers::kPhyRxDelayAirtimes),
@@ -274,6 +286,7 @@ ErgrEmhcRouting::Start()
     m_started = true;
     m_seen = std::make_unique<RecentSet>(m_duplicateCapacity, Seconds(m_duplicateTtlS));
     m_hmin = m_isSink ? 0 : kUnknownHmin;
+    m_beaconIntervalS = m_beaconPeriodS;
     if (m_selector->UsesFeedback() && !m_isSink)
     {
         FeedbackManager::Config fc;
@@ -384,6 +397,7 @@ ErgrEmhcRouting::UpdateOwnCell()
     details << "from=" << m_cell << " to=" << candidate;
     m_metrics->OnEvent(m_id, "CELL_CHANGED", details.str());
     m_cell = candidate;
+    m_memberBeaconDue = true; // lean mode: announce the new cell
     m_selector->OnKnownChange(ChangeEvent::OwnCellChanged, Simulator::Now());
     if (!m_isSink && CountHeadsInCell() < m_headsPerCell)
     {
@@ -450,13 +464,95 @@ ErgrEmhcRouting::BeaconTick()
     UpdateOwnCell();
     ExpireNeighbours();
     RecomputeHmin();
-    SendBeacon();
+    if (!m_leanBeacons)
+    {
+        SendBeacon();
+    }
+    else if (m_isHead || m_isSink)
+    {
+        // N-C: heads and sinks beacon at the current interval; it doubles (up to the limit) while nothing changes.
+        if ((Simulator::Now() - m_lastBeaconTx).GetSeconds() >= m_beaconIntervalS - 1e-6)
+        {
+            UpdateTrickleInterval();
+            SendBeacon();
+        }
+    }
+    else if (m_memberBeaconDue)
+    {
+        m_memberBeaconDue = false; // members announce themselves at start-up, on a cell change, and before elections
+        SendBeacon();
+    }
     Simulator::Schedule(Seconds(m_beaconPeriodS), &ErgrEmhcRouting::BeaconTick, this);
+}
+
+// The part of the state whose change resets the lean-beacon interval: own role, cell, Hmin and the set of
+// heads/sinks with their cells and Hmin. Positions and model changes are deliberately left out (D§4.2 N-C).
+uint64_t
+ErgrEmhcRouting::StateFingerprint()
+{
+    uint64_t h = 1469598103934665603ULL; // FNV-1a
+    auto mix = [&h](uint64_t v) {
+        h ^= v;
+        h *= 1099511628211ULL;
+    };
+    mix(m_isHead ? 1 + m_rank : 0);
+    mix(m_cell);
+    mix(m_hmin);
+    for (const auto& entry : m_table.Rows())
+    {
+        const NeighbourEntry& row = entry.second;
+        if (row.isHead || row.isSink)
+        {
+            mix(row.id);
+            mix(row.cellId);
+            mix(row.hmin);
+        }
+    }
+    return h;
+}
+
+void
+ErgrEmhcRouting::UpdateTrickleInterval()
+{
+    uint64_t fingerprint = StateFingerprint();
+    if (fingerprint != m_lastFingerprint)
+    {
+        m_beaconIntervalS = m_beaconPeriodS; // something changed: back to the short interval
+    }
+    else
+    {
+        m_beaconIntervalS = std::min(2.0 * m_beaconIntervalS, m_trickleMaxFactor * m_beaconPeriodS);
+    }
+    m_lastFingerprint = fingerprint;
+}
+
+// What this node tells its neighbours about when to expect its next beacon (used for expiry, D§3 P4).
+double
+ErgrEmhcRouting::AdvertisedIntervalS() const
+{
+    if (!m_leanBeacons)
+    {
+        return m_beaconPeriodS;
+    }
+    return (m_isHead || m_isSink) ? m_beaconIntervalS : m_electionPeriodS;
+}
+
+// N-C: a member beacons just before each election round so that the others can rank it.
+void
+ErgrEmhcRouting::SendPreElectionBeacon()
+{
+    if (!IsAlive() || m_isHead || m_isSink)
+    {
+        return;
+    }
+    UpdateSelfEstimate();
+    SendBeacon();
 }
 
 void
 ErgrEmhcRouting::SendBeacon()
 {
+    m_lastBeaconTx = Simulator::Now();
     ErgrBeaconHeader hdr;
     hdr.nodeId = m_id;
     hdr.cellId = m_cell;
@@ -470,7 +566,7 @@ ErgrEmhcRouting::SendBeacon()
     hdr.velMmps[2] = ToInt16(m_estVel.z * 1000.0);
     hdr.battery = static_cast<uint8_t>(std::round(ResidualFraction() * 255.0));
     hdr.queueLen = static_cast<uint8_t>(std::min<size_t>(255, m_sent.size()));
-    hdr.nextBeaconDs = static_cast<uint16_t>(std::round(m_beaconPeriodS * 10.0));
+    hdr.nextBeaconDs = static_cast<uint16_t>(std::min(65535.0, std::round(AdvertisedIntervalS() * 10.0)));
     if (m_feedback)
     {
         hdr.receipts = m_feedback->BuildReceipts(Simulator::Now());
@@ -503,7 +599,7 @@ ErgrEmhcRouting::ExpireNeighbours()
         }
     }
     Time timeout = Seconds(m_neighbourTimeoutBeacons * m_beaconPeriodS);
-    std::vector<uint16_t> removed = m_table.Expire(Simulator::Now(), timeout);
+    std::vector<uint16_t> removed = m_table.Expire(Simulator::Now(), timeout, m_neighbourTimeoutBeacons);
     bool lostOwnCellHead = false;
     for (uint16_t id : removed)
     {
@@ -666,6 +762,11 @@ ErgrEmhcRouting::OnElectionEpoch()
     UpdateOwnCell();
     StartElectionRound("periodic", first);
     Simulator::Schedule(Seconds(m_electionPeriodS), &ErgrEmhcRouting::OnElectionEpoch, this);
+    if (m_leanBeacons)
+    {
+        Simulator::Schedule(Seconds(std::max(0.0, m_electionPeriodS - m_preElectionLeadS)),
+                            &ErgrEmhcRouting::SendPreElectionBeacon, this);
+    }
 }
 
 // Spec D§3 P3: nodes rank themselves; those ranked <= k claim in slot (rank-1) * 1 s + jitter.

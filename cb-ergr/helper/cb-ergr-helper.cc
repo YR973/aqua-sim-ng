@@ -5,7 +5,9 @@
 
 #include "cb-ergr-helper.h"
 
+#include "ns3/aqua-sim-header-mac.h"
 #include "ns3/aqua-sim-phy-cmn.h"
+#include "ns3/ergr-headers.h"
 #include "ns3/boolean.h"
 #include "ns3/cb-ergr-params.h"
 #include "ns3/double.h"
@@ -92,6 +94,34 @@ CbErgrHelper::ConfigureHelper(AquaSimHelper& helper,
                           "TxPower", DoubleValue(txPowerFullW),
                           "RxPower", DoubleValue(rxPowerW),
                           "IdlePower", DoubleValue(idlePowerW));
+}
+
+double
+CbErgrHelper::HeaderFirstChargeS(Ptr<const Packet> frame, uint16_t nodeId, double preambleS, double bitRateBps)
+{
+    Ptr<Packet> copy = frame->Copy();
+    MacHeader mac;
+    copy->RemoveHeader(mac);
+    if (PeekFrameType(copy) != static_cast<uint8_t>(FrameType::Data))
+    {
+        return -1.0; // beacons, ACKs, elections, NACKs, handovers are always received in full
+    }
+    ErgrDataHeader data;
+    copy->PeekHeader(data);
+    if (data.forwarderId == nodeId)
+    {
+        return -1.0; // addressed to this node
+    }
+    return preambleS + data.GetSerializedSize() * 8.0 / bitRateBps; // preamble + routing header only
+}
+
+void
+CbErgrHelper::EnableHeaderFirstRx(Ptr<AquaSimNetDevice> device, uint16_t nodeId, double preambleS, double bitRateBps)
+{
+    Ptr<AquaSimPhyCmn> phy = DynamicCast<AquaSimPhyCmn>(device->GetPhy());
+    phy->SetRxEnergyTimeHook([nodeId, preambleS, bitRateBps](Ptr<const Packet> frame) {
+        return HeaderFirstChargeS(frame, nodeId, preambleS, bitRateBps);
+    });
 }
 
 void

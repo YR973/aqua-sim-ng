@@ -4,6 +4,8 @@
 
 #include "neighbour-table.h"
 
+#include <algorithm>
+
 namespace ns3
 {
 namespace cbergr
@@ -38,12 +40,13 @@ NeighbourTable::Update(const NeighbourEntry& entry)
 }
 
 std::vector<uint16_t>
-NeighbourTable::Expire(Time now, Time timeout)
+NeighbourTable::Expire(Time now, Time timeout, double multiplier)
 {
     std::vector<uint16_t> removed;
     for (auto it = m_rows.begin(); it != m_rows.end();)
     {
-        if (now - it->second.beaconTime > timeout)
+        Time limit = std::max(timeout, Seconds(multiplier * it->second.nextBeaconIn.GetSeconds()));
+        if (now - it->second.beaconTime > limit)
         {
             removed.push_back(it->first);
             it = m_rows.erase(it);

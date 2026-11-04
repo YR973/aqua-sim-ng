@@ -6,6 +6,7 @@
  */
 
 #include "ns3/acoustic-link-model.h"
+#include "ns3/aqua-sim-header-mac.h"
 #include "ns3/aqua-sim-ng-module.h"
 #include "ns3/core-module.h"
 #include "ns3/cb-ergr-helper.h"
@@ -2067,8 +2068,9 @@ struct TwoRelayNetwork
     Ptr<MetricsCollector> metrics = CreateObject<MetricsCollector>();
     Ptr<CbErgrPropagation> propagation;
     std::vector<Ptr<ErgrEmhcRouting>> routing;
+    std::vector<Ptr<AquaSimEnergyModel>> energy;
 
-    TwoRelayNetwork(const std::string& outDir)
+    explicit TwoRelayNetwork(const std::string& outDir, bool headerFirstRx = false)
     {
         MetricsCollector::Config mc;
         mc.outDir = outDir;
@@ -2095,6 +2097,10 @@ struct TwoRelayNetwork
             Ptr<AquaSimNetDevice> device = CreateObject<AquaSimNetDevice>();
             asHelper.Create(nodes.Get(i), device);
             CbErgrHelper::ConfigureDevice(device, 5000.0);
+            if (headerFirstRx)
+            {
+                CbErgrHelper::EnableHeaderFirstRx(device, i, 0.1, 5000.0);
+            }
             device->GetMac()->AssignStreams(20 + i);
             Ptr<ErgrEmhcRouting> r = DynamicCast<ErgrEmhcRouting>(device->GetRouting());
             r->SetAttribute("AutoElection", BooleanValue(false));
@@ -2107,6 +2113,7 @@ struct TwoRelayNetwork
             factory.Set("WithFeedback", BooleanValue(true));
             r->SetSelector(factory.Create<ForwarderSelector>());
             metrics->RegisterNode(i, i == 0, device->GetPhy()->EM());
+            energy.push_back(device->GetPhy()->EM());
             routing.push_back(r);
         }
         for (auto& r : routing)
@@ -2231,6 +2238,142 @@ class KilledHeadsAreReplacedByElections : public TestCase
     }
 };
 
+
+// ============================================================ D7 energy ====
+
+// N-A (D§4.2): overheard unicast DATA is charged for preamble + header only; everything else in full.
+class HeaderFirstReceiveChargesOnlyOverheardData : public TestCase
+{
+  public:
+    HeaderFirstReceiveChargesOnlyOverheardData()
+        : TestCase("D7: header-first receive charge per frame type")
+    {
+    }
+
+  private:
+    static Ptr<Packet> Frame(const Header& routingHeader, uint32_t payload)
+    {
+        Ptr<Packet> p = Create<Packet>(payload);
+        p->AddHeader(routingHeader);
+        MacHeader mac;
+        p->AddHeader(mac);
+        return p;
+    }
+
+    void DoRun() override
+    {
+        ErgrDataHeader data;
+        data.forwarderId = 7;
+        Ptr<Packet> toOther = Frame(data, 150);
+        // 0.1 s preamble + 17 B header at 5 kbit/s (0.0272 s)
+        NS_TEST_ASSERT_MSG_EQ_TOL(CbErgrHelper::HeaderFirstChargeS(toOther, 9, 0.1, 5000.0), 0.1272, 1e-9,
+                                  "overheard data: preamble + header");
+        NS_TEST_ASSERT_MSG_EQ_TOL(CbErgrHelper::HeaderFirstChargeS(toOther, 7, 0.1, 5000.0), -1.0, 0.0,
+                                  "addressed to me: whole frame");
+        ErgrBeaconHeader beacon;
+        NS_TEST_ASSERT_MSG_EQ_TOL(CbErgrHelper::HeaderFirstChargeS(Frame(beacon, 0), 9, 0.1, 5000.0), -1.0, 0.0,
+                                  "beacons are received in full");
+        ErgrAckHeader ack;
+        ack.senderId = 7;
+        NS_TEST_ASSERT_MSG_EQ_TOL(CbErgrHelper::HeaderFirstChargeS(Frame(ack, 0), 9, 0.1, 5000.0), -1.0, 0.0,
+                                  "ACKs are received in full");
+    }
+};
+
+// ... and the PHY applies it: a node that overhears data spends less receive energy with N-A on.
+class HeaderFirstReceiveSavesEnergyOnOverheardData : public TestCase
+{
+  public:
+    HeaderFirstReceiveSavesEnergyOnOverheardData()
+        : TestCase("D7: N-A lowers the receive energy of a node that overhears data")
+    {
+    }
+
+  private:
+    double OverheardRxEnergyJ(bool headerFirst)
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-na";
+        RngSeedManager::SetSeed(12);
+        TwoRelayNetwork net(dir, headerFirst);
+        for (int k = 0; k < 30; ++k)
+        {
+            Simulator::Schedule(Seconds(200.0 + 8.0 * k), &ErgrEmhcRouting::InjectPacket, net.routing[3]);
+        }
+        Simulator::Schedule(Seconds(700.0), &MetricsCollector::Finalize, net.metrics);
+        Simulator::Stop(Seconds(700.001));
+        Simulator::Run();
+        double rxJ = net.energy[2]->GetRxEnergyJ(); // relay 2 overhears what the source sends to relay 1
+        Simulator::Destroy();
+        std::filesystem::remove_all(dir);
+        return rxJ;
+    }
+
+    void DoRun() override
+    {
+        double full = OverheardRxEnergyJ(false);
+        double headerOnly = OverheardRxEnergyJ(true);
+        NS_TEST_ASSERT_MSG_EQ((headerOnly < full), true, "less receive energy with N-A (" << headerOnly << " vs " << full << " J)");
+        NS_TEST_ASSERT_MSG_EQ((headerOnly > 0.5 * full), true, "beacons still dominate, so the saving is partial");
+    }
+};
+
+// N-C (D§4.2): with lean beacons the network sends far fewer beacons but still elects heads and delivers data.
+class LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking : public TestCase
+{
+  public:
+    LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking()
+        : TestCase("D7: lean beacons reduce beacon frames and the network still works")
+    {
+    }
+
+  private:
+    struct Outcome
+    {
+        uint64_t beacons;
+        ScenarioResult result;
+        bool elected;
+    };
+
+    Outcome Run(bool lean)
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-lean";
+        ScenarioSettings settings;
+        settings.outDir = dir;
+        settings.seed = 21;
+        settings.numNodes = 50;
+        settings.simTimeS = 1500;
+        settings.warmupS = 300;
+        settings.pktRateHz = 0.01;
+        settings.initialEnergyJ = 10000;
+        settings.cellSizeM = 1500.0; // 8 cells of ~6 nodes, so most nodes are members that can stay quiet
+        settings.leanBeacons = lean;
+        ScenarioConfig config;
+        RegisterSettings(config, settings);
+        Outcome o;
+        o.result = RunScenario(settings, config);
+        o.beacons = 0;
+        for (const CsvRow& n : ReadCsv(dir + "/nodes.csv"))
+        {
+            o.beacons += std::stoull(n.at("frames_tx_beacon"));
+        }
+        o.elected = ReadFile(dir + "/events.csv").find("HEAD_ELECTED") != std::string::npos;
+        std::filesystem::remove_all(dir);
+        return o;
+    }
+
+    void DoRun() override
+    {
+        Outcome normal = Run(false);
+        Outcome lean = Run(true);
+        NS_TEST_ASSERT_MSG_EQ((lean.beacons < 0.6 * normal.beacons), true,
+                              "beacons " << lean.beacons << " (lean) vs " << normal.beacons);
+        NS_TEST_ASSERT_MSG_EQ(lean.elected, true, "heads are still elected");
+        NS_TEST_ASSERT_MSG_EQ((lean.result.packetsDelivered > 0), true, "data still reaches a sink");
+        NS_TEST_ASSERT_MSG_EQ((lean.result.pdr > 0.5 * normal.result.pdr), true,
+                              "PDR " << lean.result.pdr << " vs " << normal.result.pdr);
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -2279,6 +2422,9 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new HandoverGivesTheNewHeadTheOldModel, TestCase::QUICK);
         AddTestCase(new DeadRelayIsSuspectedAndAvoided, TestCase::QUICK);
         AddTestCase(new KilledHeadsAreReplacedByElections, TestCase::QUICK);
+        AddTestCase(new HeaderFirstReceiveChargesOnlyOverheardData, TestCase::QUICK);
+        AddTestCase(new HeaderFirstReceiveSavesEnergyOnOverheardData, TestCase::QUICK);
+        AddTestCase(new LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking, TestCase::QUICK);
     }
 };
 

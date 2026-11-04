@@ -2,6 +2,23 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-06 06:00 — D7b energy: N-A header-first receive and N-C lean beacons
+- What: PHY patch P7 (`SetRxEnergyTimeHook`: optional per-frame receive-energy duration; no hook = upstream); `CbErgrHelper::EnableHeaderFirstRx/HeaderFirstChargeS`; routing flags `LeanBeacons`, `TrickleMaxFactor`, `PreElectionLeadS`; per-row neighbour expiry that honours the advertised beacon interval; scenario settings `HeaderFirstRx`, `LeanBeacons`, `TrickleMaxFactor`. 3 new tests (45 cases pass).
+- Why: kickoff §2.2 (implement behind flags) and design D§4.1-4.2: calibration showed Rx is ~90% of the energy (CONFIRM E13), which makes both "must".
+- Effect on results: only when the flags are set (default off).
+- Spec/design deviation:
+  1. **N-A** is implemented as an energy charge only: the whole frame still occupies the channel and can collide; a frame that arrived corrupted is charged in full; beacons, ACKs, elections, NACKs and handovers are always charged in full; DATA addressed to the node is charged in full. This is a modelling assumption (the modem must be able to decode the header separately, D§9 risk).
+  2. **N-C** is simplified: heads and sinks beacon at an interval that doubles (to at most `TrickleMaxFactor` = 2 x the base period; the design allows 2-4) whenever the quantised state (own role/cell/Hmin and the set of heads/sinks with their cells and Hmin) has not changed since the last beacon, and resets to the base period otherwise. Members beacon at start-up, after a cell change and 8 s before each election round. Every beacon advertises its next interval; a neighbour row expires after max(3 base periods, 3 x the advertised interval). The factor 2 keeps a silent head detectable within ~300 s; 4 would need the quorum-based detection of D§3 P4, which is not built.
+  3. **N-B (members sleep) is not implemented.** Members still listen all the time.
+- Result (N = 250, 3000 s, warm-up 500 s, 0.004 pkt/s, published E0 = 300 J, RoundRobin; `results/reference/d5-smoke/energy_flags_N250_rate0.004_E300.csv`):
+  | flags | PDR | Rx share | first node dead | half dead | beacon B / delivered |
+  |---|---|---|---|---|---|
+  | none | 0.162 | 0.892 | 1036 s | 1789 s | 847 |
+  | N-A | 0.178 | 0.878 | 1107 s | 2038 s | 777 |
+  | N-C | 0.164 | 0.882 | 1542 s | 2948 s | 318 |
+  | N-A + N-C | 0.161 | 0.861 | 1795 s | none | 331 |
+  N-C cuts beacon bytes by 62% and moves the half-dead time from 30 to 49 minutes; N-A helps little at this light data load (overheard data is a small part of Rx; it should matter more at higher load). Rx is still 86% of the energy and the first node still dies within 30 minutes, so the published E0 is not usable for long runs (CONFIRM E13 stays open).
+
 ## 2026-11-06 02:00 — D7a head failure: suspect tier, planned handover, unplanned takeover, failure injection
 - What: `ErgrHandoverHeader` (115 B) and HANDOVER frames; selector hooks `OnRoleChange`, `OnHandoverOut/In` with the CB implementation; suspect tier in routing (`NoteForwarderTimeout/Alive`, `IsSuspect`); `ErgrEmhcRouting::Kill()`; `KillHeadsAtS`/`KillHeadsCells` in the scenario; `fwd_cell` in decisions.csv; events `HEAD_SUSPECT`, `HEAD_DEAD`, `HANDOVER_OUT/IN`, `NODE_KILLED`; energy-model bookkeeping records a death when the battery is set to 0 (patch P4). 3 new tests (42 cases pass), including spec test 14.
 - Why: kickoff §2.1 (failure detection), §2.3 (planned vs unplanned handover), §4 D7, design D§3 P3-P5, P8.

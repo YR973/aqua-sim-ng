@@ -38,6 +38,15 @@ class CbErgrHelper
     /// Per-device settings that have no helper attribute (modulation bit rate).
     static void ConfigureDevice(Ptr<AquaSimNetDevice> device, double bitRateBps);
 
+    /**
+     * N-A header-first receive (D§4.2): a node that hears unicast DATA addressed to someone else pays receive
+     * energy only for the preamble and the routing header. Beacons, ACKs and frames for this node are charged in full.
+     */
+    static void EnableHeaderFirstRx(Ptr<AquaSimNetDevice> device, uint16_t nodeId, double preambleS, double bitRateBps);
+
+    /// Receive-energy duration of one frame under N-A, or -1 for "the whole frame" (exposed for tests).
+    static double HeaderFirstChargeS(Ptr<const Packet> frame, uint16_t nodeId, double preambleS, double bitRateBps);
+
     /// Send every link decision of the channel (PER losses) to the metrics collector.
     static void ConnectLinkTrace(Ptr<CbErgrPropagation> propagation, Ptr<MetricsCollector> metrics);
 

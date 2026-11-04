@@ -512,6 +512,14 @@ AquaSimPhyCmn::PrevalidateIncomingPkt(Ptr<Packet> p)
       Simulator::Schedule(CalcTxTime(asHeader.GetSize()),&AquaSimNetDevice::SetTransmissionStatus,GetNetDevice(),NIDLE);
   }
 
+  // CB-ERGR patch P7: a frame that is not for this node may be charged for its preamble and header only.
+  if (m_rxEnergyTimeHook && !asHeader.GetErrorFlag())
+  {
+    double chargeS = m_rxEnergyTimeHook(p);
+    if (chargeS >= 0.0)
+      txTime = Seconds(chargeS);
+  }
+
   UpdateRxEnergy(txTime, (bool)asHeader.GetErrorFlag());
 
   MacHeader mach;

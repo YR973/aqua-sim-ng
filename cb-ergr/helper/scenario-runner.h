@@ -41,6 +41,9 @@ struct ScenarioSettings
     int headsPerCell = params::grid::kHeadsPerCell;
     bool faceOnly = params::grid::kFaceOnly;
     double beaconPeriodS = params::timers::kBeaconPeriodS;
+    bool leanBeacons = params::timers::kLeanBeacons;        // N-C
+    double trickleMaxFactor = params::timers::kTrickleMaxFactor;
+    bool headerFirstRx = params::timers::kHeaderFirstRx;    // N-A
     double electionPeriodS = params::timers::kElectionPeriodS;
     double electionBeta = params::election::kBeta;
     // phy / channel

@@ -63,8 +63,9 @@ class NeighbourTable
     /// Insert or refresh a row from a received beacon. 'entry.beaconTime' must be set by the caller.
     TableUpdateResult Update(const NeighbourEntry& entry);
 
-    /// Remove rows whose last beacon is older than 'timeout'. Returns the removed ids.
-    std::vector<uint16_t> Expire(Time now, Time timeout);
+    /// Remove rows whose last beacon is older than max(timeout, multiplier x the interval the node advertised).
+    /// Returns the removed ids.
+    std::vector<uint16_t> Expire(Time now, Time timeout, double multiplier = 0.0);
 
     /// Row for a node, or nullptr.
     const NeighbourEntry* Find(uint16_t id) const;
