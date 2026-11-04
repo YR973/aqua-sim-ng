@@ -75,6 +75,7 @@ class CbErgrPropagation : public AquaSimPropagation
     double m_referencePtW;
     double m_calibFrameBytes;
     double m_extraLossProbability;
+    bool m_idealLinks;
     std::function<bool(uint32_t, uint32_t, uint8_t)> m_filter;
     Ptr<UniformRandomVariable> m_extraLossDraw;
 

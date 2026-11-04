@@ -39,7 +39,7 @@
 - Rx energy is ~90% of the total, so by the D§4.1 rule N-A (header-first receive) and N-C (lean beacons) are **must**, and E0 has to be set (or the published one confirmed) with the supervisor: with 300 J the network is dead in 11-21 minutes.
 - At 0.07 pkt/s the channel is saturated (PDR 3.5% even before deaths). The pilot's 0.004 pkt/s is workable.
 - Round robin PDR is low (15-30%) because the shadowed links are poor (CONFIRM E16) and there are no retransmissions; it is the baseline CB must beat.
-- **Spec test 16 (PDR falls as speed rises) is NOT reproduced**: PDR is flat in speed (0.272, 0.287, 0.294, 0.294 for U = 0, 0.5, 1, 2). Mobility does raise elections/hour (116 -> 486), shorten head tenure (1242 s -> 350 s) and raise voids (7 -> 24). Not tuned. Needs the published reference numbers (CONFIRM E15, C3).
+- **Spec test 16**: not reproduced by ERGR-EMHC-g (below); reproduced by the published protocol P0 (see CHANGELOG 2026-11-04 23:30). ERGR-EMHC-g: PDR is flat in speed (0.272, 0.287, 0.294, 0.294 for U = 0, 0.5, 1, 2). Mobility does raise elections/hour (116 -> 486), shorten head tenure (1242 s -> 350 s) and raise voids (7 -> 24). Not tuned. Needs the published reference numbers (CONFIRM E15, C3).
 - Speed: N=250 takes ~35 s of wall time per 2000 s in the debug build (about 6 min for 20000 s); N=100 takes ~7 s per 1000 s.
 
 ## Next
@@ -51,7 +51,7 @@
 ## How to check everything (end-of-session checklist)
 ```
 cd <ns-3>/ && cmake --build cmake-cache -j4
-./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 46 cases
+./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 48 cases
 python3 -I contrib/cb-ergr/scripts/check_params.py                        # rule 11
 python3 -I contrib/cb-ergr/scripts/run_sweep.py contrib/cb-ergr/sweeps/example-speed.yaml --dry-run
 ```

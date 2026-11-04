@@ -9,6 +9,7 @@
 #include "ns3/cb-ergr-helper.h"
 #include "ns3/core-module.h"
 #include "ns3/current-drift-mobility.h"
+#include "ns3/ergr-emhc-published.h"
 #include "ns3/ergr-emhc-routing.h"
 #include "ns3/localisation-noise.h"
 #include "ns3/mobility-module.h"
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace ns3
@@ -32,6 +34,7 @@ namespace cbergr
 void
 RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
 {
+    c.Add("Protocol", &s.protocol, "G = improved ERGR-EMHC-g (default), P0 = ERGR-EMHC as published (round robin only)");
     c.Add("Selector", &s.selector, "Forwarding method: RoundRobin, CbV5, ...");
     c.Add("SelectorAttributes", &s.selectorAttributes, "Attributes of the selector: Name=value;Name=value");
     c.Add("Flags", &s.flags, "Free text describing the variant (goes to summary.csv)");
@@ -43,6 +46,7 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("N", &s.numNodes, "Number of ordinary nodes");
     c.Add("NumSinks", &s.numSinks, "Number of surface sinks");
     c.Add("PayloadBytes", &s.payloadBytes, "Data payload (B)");
+    c.Add("NumSources", &s.numSources, "Number of nodes that generate traffic (0 = all)");
     c.Add("PktRatePerNodeHz", &s.pktRateHz, "Data packets per node per second");
     c.Add("DataStartS", &s.dataStartS, "Traffic start time (s)");
     c.Add("BoxSizeM", &s.boxSizeM, "Box side (m)");
@@ -58,6 +62,7 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("RangeM", &s.rangeM, "Transmission range R (m)");
     c.Add("BitRateBps", &s.bitRateBps, "Bit rate (bit/s)");
     c.Add("TPre", &s.preambleS, "Preamble duration (s)");
+    c.Add("IdealLinks", &s.idealLinks, "Every frame inside the range R is decodable (the paper's near-error-free channel)");
     c.Add("ShadowSigmaDb", &s.shadowSigmaDb, "Shadowing std (dB)");
     c.Add("ShadowTauS", &s.shadowTauS, "Shadowing correlation time (s)");
     c.Add("InitialEnergyJ", &s.initialEnergyJ, "Initial battery (J)");
@@ -178,12 +183,14 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     Ptr<AquaSimChannel> channel = CbErgrHelper::CreateChannel(propagation, s.shadowSigmaDb, s.shadowTauS);
     propagation->SetAttribute("RangeM", DoubleValue(s.rangeM));
     propagation->SetAttribute("BitRateBps", DoubleValue(s.bitRateBps));
+    propagation->SetAttribute("IdealLinks", BooleanValue(s.idealLinks));
     CbErgrHelper::ConnectLinkTrace(propagation, metrics);
 
     AquaSimHelper asHelper = AquaSimHelper::Default();
     asHelper.SetChannel(channel);
     asHelper.SetMac("ns3::AquaSimBroadcastMac");
-    asHelper.SetRouting("ns3::cbergr::ErgrEmhcRouting");
+    const bool publishedProtocol = (s.protocol == "P0");
+    asHelper.SetRouting(publishedProtocol ? "ns3::cbergr::ErgrEmhcPublishedRouting" : "ns3::cbergr::ErgrEmhcRouting");
     CbErgrHelper::ConfigureHelper(asHelper, s.preambleS, s.initialEnergyJ, s.txPowerFullW, s.rxPowerW,
                                   s.idlePowerW);
 
@@ -200,10 +207,31 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
                       propagation->GetShadowing(), linkModel, s.rangeM);
 
     std::vector<Ptr<ErgrEmhcRouting>> routings;
+    std::vector<Ptr<ErgrEmhcPublishedRouting>> publishedRoutings;
+    std::vector<std::pair<uint16_t, Vector>> sinkTable;
     int64_t stream = 1;
     stream += propagation->AssignStreams(stream);
     placement->SetStream(stream++);
     stream += localisation->AssignStreams(stream);
+
+    // Which ordinary nodes generate traffic: all of them, or NumSources random ones (as in the ERGR-EMHC paper).
+    std::set<int> sourceNodes;
+    if (s.numSources > 0)
+    {
+        Ptr<UniformRandomVariable> chooser = CreateObject<UniformRandomVariable>();
+        chooser->SetStream(stream++);
+        std::vector<int> ids;
+        for (int i = numSinks; i < numTotal; ++i)
+        {
+            ids.push_back(i);
+        }
+        for (int k = 0; k < s.numSources && !ids.empty(); ++k)
+        {
+            size_t pick = chooser->GetInteger(0, ids.size() - 1);
+            sourceNodes.insert(ids[pick]);
+            ids.erase(ids.begin() + pick);
+        }
+    }
 
     for (int i = 0; i < numTotal; ++i)
     {
@@ -246,6 +274,27 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         }
         device->GetMac()->AssignStreams(stream++);
 
+        if (publishedProtocol)
+        {
+            Ptr<ErgrEmhcPublishedRouting> p0 = DynamicCast<ErgrEmhcPublishedRouting>(device->GetRouting());
+            p0->SetAttribute("CellSizeM", DoubleValue(s.cellSizeM));
+            p0->SetAttribute("BoxSizeM", DoubleValue(s.boxSizeM));
+            p0->SetAttribute("TxRangeM", DoubleValue(s.rangeM));
+            const bool generates = (s.numSources == 0) || sourceNodes.count(i) > 0;
+            p0->SetAttribute("PktRatePerNodeHz", DoubleValue(generates ? s.pktRateHz : 0.0));
+            p0->SetAttribute("PayloadBytes", UintegerValue(s.payloadBytes));
+            p0->SetAttribute("DataStartS", DoubleValue(s.dataStartS));
+            p0->SetNodeRole(isSink);
+            p0->SetMetrics(metrics);
+            stream += p0->AssignStreams(stream);
+            metrics->RegisterNode(node->GetId(), isSink, device->GetPhy()->EM());
+            publishedRoutings.push_back(p0);
+            if (isSink)
+            {
+                sinkTable.emplace_back(static_cast<uint16_t>(node->GetId()), pos);
+            }
+            continue;
+        }
         Ptr<ErgrEmhcRouting> routing = DynamicCast<ErgrEmhcRouting>(device->GetRouting());
         routing->SetAttribute("CellSizeM", DoubleValue(s.cellSizeM));
         routing->SetAttribute("BoxSizeM", DoubleValue(s.boxSizeM));
@@ -257,7 +306,8 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetAttribute("TrickleMaxFactor", DoubleValue(s.trickleMaxFactor));
         routing->SetAttribute("ElectionPeriodS", DoubleValue(s.electionPeriodS));
         routing->SetAttribute("ElectionBeta", DoubleValue(s.electionBeta));
-        routing->SetAttribute("PktRatePerNodeHz", DoubleValue(s.pktRateHz));
+        const bool generatesTraffic = (s.numSources == 0) || sourceNodes.count(i) > 0;
+        routing->SetAttribute("PktRatePerNodeHz", DoubleValue(generatesTraffic ? s.pktRateHz : 0.0));
         routing->SetAttribute("PayloadBytes", UintegerValue(s.payloadBytes));
         routing->SetAttribute("DataStartS", DoubleValue(s.dataStartS));
         routing->SetNodeRole(isSink);
@@ -302,6 +352,11 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     }
     for (Ptr<ErgrEmhcRouting>& routing : routings)
     {
+        routing->Start();
+    }
+    for (Ptr<ErgrEmhcPublishedRouting>& routing : publishedRoutings)
+    {
+        routing->SetSinks(sinkTable);
         routing->Start();
     }
 

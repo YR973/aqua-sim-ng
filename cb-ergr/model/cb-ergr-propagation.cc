@@ -12,6 +12,7 @@
 #include "ns3/aqua-sim-header-mac.h"
 #include "ns3/aqua-sim-header.h"
 #include "ns3/aqua-sim-net-device.h"
+#include "ns3/boolean.h"
 #include "ns3/double.h"
 #include "ns3/log.h"
 #include "ns3/mobility-model.h"
@@ -86,6 +87,11 @@ CbErgrPropagation::GetTypeId()
                           DoubleValue(0.0),
                           MakeDoubleAccessor(&CbErgrPropagation::m_extraLossProbability),
                           MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("IdealLinks",
+                          "Every frame inside the range is decodable (like the paper's BER 1e-9 channel); collisions remain.",
+                          BooleanValue(params::channel::kIdealLinks),
+                          MakeBooleanAccessor(&CbErgrPropagation::m_idealLinks),
+                          MakeBooleanChecker())
             .AddAttribute("Shadowing",
                           "The shadowing process (created automatically).",
                           PointerValue(),
@@ -108,7 +114,8 @@ CbErgrPropagation::CbErgrPropagation()
       m_windSpeedMps(params::phy::kWindSpeedMps),
       m_referencePtW(params::phy::kReferenceAcousticPtW),
       m_calibFrameBytes(params::phy::kCalibFrameBytes),
-      m_extraLossProbability(0.0)
+      m_extraLossProbability(0.0),
+      m_idealLinks(params::channel::kIdealLinks)
 {
     m_extraLossDraw = CreateObject<UniformRandomVariable>();
     m_shadowing = CreateObject<GmShadowing>();
@@ -213,7 +220,7 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
         const double shadowDb = m_shadowing->GetShadowDb(senderId, receiverId, now);
         const double snrDb = m_link->SnrDb(sourceLevelDb, distanceM, shadowDb);
         const double per = m_link->PerFromSnr(snrDb, frameBytes);
-        bool decodable = m_lossDraw->GetValue() >= per;
+        bool decodable = (m_lossDraw->GetValue() >= per) || m_idealLinks; // the draw is always consumed
         if (decodable && m_extraLossProbability > 0.0 && m_extraLossDraw->GetValue() < m_extraLossProbability)
         {
             decodable = false; // forced loss (tests)

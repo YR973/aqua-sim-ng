@@ -107,6 +107,77 @@ GridGeometry::AreNeighbours(uint16_t a, uint16_t b, bool faceOnly) const
     return !faceOnly || changedAxes == 1;
 }
 
+bool
+GridGeometry::AreNeighboursPaper(uint16_t a, uint16_t b) const
+{
+    if (a == b)
+    {
+        return false;
+    }
+    int ax, ay, az, bx, by, bz;
+    SplitId(a, ax, ay, az);
+    SplitId(b, bx, by, bz);
+    int dx = std::abs(ax - bx), dy = std::abs(ay - by), dz = std::abs(az - bz);
+    if (dx <= 1 && dy <= 1 && dz <= 1)
+    {
+        return true;
+    }
+    // two cells away along exactly one axis, same position on the other two
+    return (dx == 2 && dy == 0 && dz == 0) || (dy == 2 && dx == 0 && dz == 0) || (dz == 2 && dx == 0 && dy == 0);
+}
+
+std::vector<uint16_t>
+GridGeometry::NeighbourCellsPaper(uint16_t cellId) const
+{
+    std::vector<uint16_t> result;
+    for (int other = 0; other < NumCells(); ++other)
+    {
+        if (AreNeighboursPaper(cellId, static_cast<uint16_t>(other)))
+        {
+            result.push_back(static_cast<uint16_t>(other));
+        }
+    }
+    return result;
+}
+
+std::vector<uint8_t>
+GridGeometry::HminTable(const std::vector<Vector>& sinkPositions) const
+{
+    const int n = NumCells();
+    std::vector<int> distance(n, -1);
+    std::vector<uint16_t> queue;
+    for (const Vector& p : sinkPositions)
+    {
+        uint16_t cell = CellIdOf(p);
+        if (distance[cell] < 0)
+        {
+            distance[cell] = 0;
+            queue.push_back(cell);
+        }
+    }
+    for (size_t head = 0; head < queue.size(); ++head)
+    {
+        uint16_t cell = queue[head];
+        for (uint16_t next : NeighbourCellsPaper(cell))
+        {
+            if (distance[next] < 0)
+            {
+                distance[next] = distance[cell] + 1;
+                queue.push_back(next);
+            }
+        }
+    }
+    std::vector<uint8_t> hmin(n, 255);
+    for (int c = 0; c < n; ++c)
+    {
+        if (distance[c] >= 0)
+        {
+            hmin[c] = static_cast<uint8_t>(std::max(1, distance[c])); // the sink cell itself is one hop from the sink
+        }
+    }
+    return hmin;
+}
+
 double
 GridGeometry::MaxCentreDistanceM() const
 {

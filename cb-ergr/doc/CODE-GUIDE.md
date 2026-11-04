@@ -10,6 +10,7 @@ This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code
 > | File | What it does |
 > |---|---|
 > | `model/cb-ergr-params.h` | Every default value (the only place) |
+> | `model/ergr-emhc-published.{h,cc}` | P0 = ERGR-EMHC as published (`Protocol=P0`): 32-neighbour cells, NG1T/NG2T from Hello, round robin, NegAck void handling, implicit ACK, Exit/Retire elections; no learner |
 > | `model/ergr-emhc-routing.{h,cc}` | Per-node routing: beacons, election, Hmin, eligible list (`GetEligible`), forwarding, member hand-off, void NACK |
 > | `model/selector-cb-v5.{h,cc}` | **The method**: features, Thompson sample, score, ACK gate, learning, sharing (read this one) |
 > | `model/oracle-evaluator.*`, `selector-oracle.*` | True-world hop success; the oracle selectors. **The only code allowed to read ground truth** |

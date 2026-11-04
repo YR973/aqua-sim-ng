@@ -1,5 +1,6 @@
 {
  "channel": {
+  "kIdealLinks": false,
   "kShadowSigmaDb": 5.0,
   "kShadowTauS": 120.0,
   "kShadowTickS": 5.0
@@ -80,6 +81,20 @@
   "kUpdateIntervalS": 5.0,
   "kVelErrMps": 0.1,
   "kVerticalDriftFactor": 0.1
+ },
+ "p0": {
+  "kBeta": 0.9,
+  "kCellSizeM": 433.01270189221935,
+  "kEnergyThresholdJ": 10.0,
+  "kHmaxFactor": 2.0,
+  "kIPeriodS": 50.0,
+  "kNackProcS": 0.05,
+  "kNewElectionS": 400.0,
+  "kPositionCheckS": 5.0,
+  "kPriorityWeight": 0.5,
+  "kRandomTimers": true,
+  "kUpdatePeriodS": 500.0,
+  "kVoidRetryLimit": 3
  },
  "phy": {
   "kBandwidthHz": 5000.0,

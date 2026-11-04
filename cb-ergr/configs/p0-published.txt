@@ -1,7 +1,18 @@
-# configs/p0-published.txt: "P0" = ERGR-EMHC with the published settings (K§2.5): one head per cell and the
-# paper's cell side R/sqrt(3). Only the settings that exist in this code are changed; the published
-# election rule and neighbour set are NOT reproduced yet (CONFIRM A1-A3, A6), so treat this as an
-# approximation of P0 until the supervisor answers Q1-Q2.
+# configs/p0-published.txt: "P0" = ERGR-EMHC as published (Al-Salti et al. 2019), the reference of test 16.
+# Setup of the paper's section 5 (CONFIRM E26/E27); everything marked [CONFIRM] in params.h namespace p0 is a stand-in.
+Protocol = P0
 Selector = RoundRobin
-CellSizeM = 866
-HeadsPerCell = 1
+CellSizeM = 433.0127
+N = 300
+NumSinks = 3
+NumSources = 10
+PktRatePerNodeHz = 0.07
+InitialEnergyJ = 300
+SimTimeS = 2000
+WarmupS = 150
+DataStartS = 100
+CurrentSpeed = 1.0
+# The paper's radio (Al-Salti et al. §5): 17.8 kbit/s, Tx 8 W, Rx 0.8 W (CONFIRM E26). Our own spec uses 5 kbit/s, 2 W, 0.75 W.
+BitRateBps = 17800
+TxPowerFullW = 8
+RxPowerW = 0.8

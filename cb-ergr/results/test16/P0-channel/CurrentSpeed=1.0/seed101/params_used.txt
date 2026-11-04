@@ -1,0 +1,49 @@
+# resolved parameters of this run (header defaults < config file < command line)
+Protocol = P0    # G = improved ERGR-EMHC-g (default), P0 = ERGR-EMHC as published (round robin only)
+Selector = RoundRobin    # Forwarding method: RoundRobin, CbV5, ...
+SelectorAttributes =     # Attributes of the selector: Name=value;Name=value
+Flags =     # Free text describing the variant (goes to summary.csv)
+OutDir = results/test16/P0-channel/CurrentSpeed=1.0/seed101    # Directory for the result files
+Seed = 101    # Random seed
+RngRun = 1    # Run number
+SimTimeS = 2000    # Simulated time (s)
+WarmupS = 150    # Warm-up excluded from the metrics (s)
+N = 300    # Number of ordinary nodes
+NumSinks = 3    # Number of surface sinks
+PayloadBytes = 150    # Data payload (B)
+NumSources = 10    # Number of nodes that generate traffic (0 = all)
+PktRatePerNodeHz = 0.07    # Data packets per node per second
+DataStartS = 100    # Traffic start time (s)
+BoxSizeM = 3000    # Box side (m)
+CellSizeM = 433.0127    # Grid cell side (m)
+HeadsPerCell = 2    # Heads per cell (k)
+FaceOnly = false    # Only face-adjacent cells are neighbours
+BeaconPeriodS = 50    # Beacon interval (s)
+LeanBeacons = false    # N-C: members beacon only before elections, head beacons stretch (Trickle style)
+TrickleMaxFactor = 2    # Largest head beacon interval in base periods (lean mode)
+HeaderFirstRx = false    # N-A: overheard unicast data is charged preamble + header only
+ElectionPeriodS = 400    # Periodic election interval (s)
+ElectionBeta = 0.9    # Energy weight in the head score
+RangeM = 1500    # Transmission range R (m)
+BitRateBps = 17800    # Bit rate (bit/s)
+TPre = 0.1    # Preamble duration (s)
+IdealLinks = false    # Every frame inside the range R is decodable (the paper's near-error-free channel)
+ShadowSigmaDb = 5    # Shadowing std (dB)
+ShadowTauS = 120    # Shadowing correlation time (s)
+InitialEnergyJ = 300    # Initial battery (J)
+TxPowerFullW = 8    # Transmit power draw at full level (W)
+RxPowerW = 0.8    # Receive power draw (W)
+IdlePowerW = 0.008    # Idle power draw (W)
+CurrentSpeed = 1    # Ocean current speed scale U (m/s)
+LocErrM = 20    # Position error std per axis (m)
+VelErrMps = 0.1    # Velocity error std per axis (m/s)
+KillHeadsAtS = -1    # Failure injection time (s); negative = no failures
+KillHeadsCells = 5    # Number of cells that lose one head at KillHeadsAtS
+RegretAllPowerLevels = false    # Regret compares against all power levels (use with EnablePower=true)
+ComputeRegret = true    # Measure regret against the oracle at every decision
+LogNodes = false    # Write nodes.csv
+LogLinks = false    # Write links.csv
+LogPackets = false    # Write packets.csv
+LogEvents = true    # Write events.csv
+LogDecisions = false    # Write decisions.csv
+LogFrames = false    # Write frames.csv (large)

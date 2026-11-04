@@ -156,7 +156,8 @@ class ErgrElectionHeader : public Header
     enum Kind : uint8_t
     {
         Hello = 1,
-        Retire = 2
+        Retire = 2,
+        Exit = 3     ///< P0: a node leaves its cell; scoreQ carries the cell it moves to
     };
 
     static TypeId GetTypeId();

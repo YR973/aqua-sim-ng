@@ -2517,6 +2517,130 @@ uint32_t PowerLevelsChangeSuccessAndEnergy::s_received[3] = {0, 0, 0};
 
 // ======================================================== the suite =========
 
+
+// ===================================================== P0 (published) ======
+
+// The paper's 32-neighbour relation and the grid-based Hmin (ERGR-EMHC §4.1).
+class PublishedGeometryHas32NeighboursAndBfsHmin : public TestCase
+{
+  public:
+    PublishedGeometryHas32NeighboursAndBfsHmin()
+        : TestCase("P0: 32 neighbour cells and Hmin from a breadth-first search")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        GridGeometry g(3000.0, 433.0127); // 7 cells per axis
+        NS_TEST_ASSERT_MSG_EQ(g.CellsPerAxis(), 7, "3000 / 433");
+        uint16_t centre = g.CellIdOf(Vector(1500, 1500, 1500)); // cell (3,3,3)
+        NS_TEST_ASSERT_MSG_EQ(g.NeighbourCellsPaper(centre).size(), 32u, "26 adjacent + 6 two steps along one axis");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighboursPaper(centre, g.CellIdOf(Vector(1500 + 2 * 433.0127, 1500, 1500))), true,
+                              "two steps along x");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighboursPaper(centre, g.CellIdOf(Vector(1500 + 2 * 433.0127, 1500 + 433.0127, 1500))),
+                              false, "two steps in x and one in y is not a neighbour");
+        NS_TEST_ASSERT_MSG_EQ(g.AreNeighboursPaper(centre, centre), false, "not its own neighbour");
+        // The relation is symmetric.
+        for (uint16_t a = 0; a < g.NumCells(); a += 7)
+        {
+            for (uint16_t b : g.NeighbourCellsPaper(a))
+            {
+                NS_TEST_ASSERT_MSG_EQ(g.AreNeighboursPaper(b, a), true, "symmetric");
+            }
+        }
+        // Hmin: a sink at the surface; its cell and all its neighbours are 1; every other reachable cell has a
+        // neighbour that is one lower.
+        std::vector<uint8_t> hmin = g.HminTable({Vector(1500, 1500, 0)});
+        uint16_t sinkCell = g.CellIdOf(Vector(1500, 1500, 0));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(hmin[sinkCell]), 1, "the sink's cell");
+        for (uint16_t n : g.NeighbourCellsPaper(sinkCell))
+        {
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(hmin[n]), 1, "neighbours of the sink cell");
+        }
+        int maxHmin = 0;
+        for (uint16_t c = 0; c < g.NumCells(); ++c)
+        {
+            maxHmin = std::max<int>(maxHmin, hmin[c]);
+            if (hmin[c] > 1)
+            {
+                bool lower = false;
+                for (uint16_t n : g.NeighbourCellsPaper(c))
+                {
+                    lower = lower || hmin[n] == hmin[c] - 1;
+                }
+                NS_TEST_ASSERT_MSG_EQ(lower, true, "every cell with Hmin > 1 has a neighbour with Hmin - 1");
+            }
+        }
+        // Farthest cell (0,0,6) from the sink cell (3,3,0): three diagonal steps, then a 2-step and a 1-step along z.
+        NS_TEST_ASSERT_MSG_EQ(maxHmin, 5, "deepest cell is 5 hops from the sink");
+    }
+};
+
+static ScenarioResult
+RunTinyP0(const std::string& outDir, int seed, double speed)
+{
+    ScenarioSettings settings;
+    settings.protocol = "P0";
+    settings.outDir = outDir;
+    settings.seed = seed;
+    settings.numNodes = 120;
+    settings.numSinks = 3;
+    settings.numSources = 10;
+    settings.cellSizeM = 433.0127;
+    settings.simTimeS = 700;
+    settings.warmupS = 300;
+    settings.dataStartS = 100;
+    settings.pktRateHz = 0.07;
+    settings.currentSpeed = speed;
+    settings.idealLinks = true;
+    settings.shadowSigmaDb = 0.0;
+    settings.initialEnergyJ = 300.0;
+    ScenarioConfig config;
+    RegisterSettings(config, settings);
+    return RunScenario(settings, config);
+}
+
+// P0 runs end to end: heads are elected, packets reach the sinks over several hops, no beacon/ACK frames exist
+// (the protocol has none), only sources create traffic, and the same seed gives the same files.
+class PublishedProtocolRunsAndIsDeterministic : public TestCase
+{
+  public:
+    PublishedProtocolRunsAndIsDeterministic()
+        : TestCase("P0: elections, multi-hop delivery, no beacons or ACKs, determinism")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string base = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-p0";
+        ScenarioResult a = RunTinyP0(base + "-a", 5, 1.0);
+        RunTinyP0(base + "-b", 5, 1.0);
+        NS_TEST_ASSERT_MSG_EQ((a.packetsCreated > 50), true, "ten sources at 0.07 pkt/s create traffic");
+        NS_TEST_ASSERT_MSG_EQ((a.packetsDelivered > 0), true, "something reaches a sink");
+        NS_TEST_ASSERT_MSG_EQ((ReadFile(base + "-a/events.csv").find("HEAD_ELECTED") != std::string::npos), true, "heads");
+        auto summary = ReadCsv(base + "-a/summary.csv");
+        NS_TEST_ASSERT_MSG_EQ(summary.size(), 1u, "one summary row");
+        NS_TEST_ASSERT_MSG_EQ(std::stod(summary[0]["ctrl_bytes_beacon_per_delivered"]), 0.0, "no beacons in P0");
+        NS_TEST_ASSERT_MSG_EQ(std::stod(summary[0]["ack_frames_per_delivered"]), 0.0, "no ACKs in P0");
+        // Only the 10 chosen sources originate packets.
+        int originators = 0;
+        for (auto& row : ReadCsv(base + "-a/nodes.csv"))
+        {
+            originators += (std::stod(row["data_originated"]) > 0) ? 1 : 0;
+        }
+        NS_TEST_ASSERT_MSG_EQ((originators >= 1 && originators <= 10), true, "at most NumSources nodes originate data");
+        for (const char* file : {"summary.csv", "packets.csv", "nodes.csv", "events.csv"})
+        {
+            NS_TEST_ASSERT_MSG_EQ((ReadFile(base + "-a/" + file) == ReadFile(base + "-b/" + file)), true,
+                                  file << " differs between two runs with the same seed");
+        }
+        std::filesystem::remove_all(base + "-a");
+        std::filesystem::remove_all(base + "-b");
+    }
+};
+
 class CbErgrTestSuite : public TestSuite
 {
   public:
@@ -2567,6 +2691,8 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new HeaderFirstReceiveSavesEnergyOnOverheardData, TestCase::QUICK);
         AddTestCase(new LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking, TestCase::QUICK);
         AddTestCase(new PowerLevelsChangeSuccessAndEnergy, TestCase::QUICK);
+        AddTestCase(new PublishedGeometryHas32NeighboursAndBfsHmin, TestCase::QUICK);
+        AddTestCase(new PublishedProtocolRunsAndIsDeterministic, TestCase::QUICK);
     }
 };
 

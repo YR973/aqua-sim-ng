@@ -1,0 +1,11 @@
+# configs/g-base.txt: ERGR-EMHC-g runs (improved protocol). Both values are [CONFIRM] (CONFIRM E27, E28):
+# 10000 J keeps nodes alive over 10000 s; 0.004 pkt/s per node is the pilot's rate.
+InitialEnergyJ = 10000
+PktRatePerNodeHz = 0.004
+N = 250
+NumSinks = 4
+CellSizeM = 750
+HeadsPerCell = 2
+CurrentSpeed = 1.0
+SimTimeS = 20000
+WarmupS = 2000

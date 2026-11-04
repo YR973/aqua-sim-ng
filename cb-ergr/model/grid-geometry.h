@@ -41,6 +41,17 @@ class GridGeometry
     /// True if b is one of the neighbour cells of a (never true for a == b).
     bool AreNeighbours(uint16_t a, uint16_t b, bool faceOnly) const;
 
+    /// The 32 neighbour cells of ERGR-EMHC (paper Fig. 3): the 26 adjacent cells plus the 6 cells two steps away along one axis.
+    std::vector<uint16_t> NeighbourCellsPaper(uint16_t cellId) const;
+    bool AreNeighboursPaper(uint16_t a, uint16_t b) const;
+
+    /**
+     * Cell-level minimum hop count to the nearest sink cell over the 32-neighbour relation (the paper's Hmin).
+     * A sink's own cell and its neighbours all give 1: a node there reaches the sink directly. Computed by
+     * breadth-first search from the cells containing the given sink positions.
+     */
+    std::vector<uint8_t> HminTable(const std::vector<Vector>& sinkPositions) const;
+
     /// Largest possible distance from a point in the cell to its centre (half the cube diagonal), metres.
     double MaxCentreDistanceM() const;
 

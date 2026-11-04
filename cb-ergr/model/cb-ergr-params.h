@@ -73,6 +73,7 @@ namespace channel
 {
 constexpr double kShadowSigmaDb = 5.0;   // [SPEC] S§4.5
 constexpr double kShadowTauS = 120.0;    // [SPEC] S§4.5
+constexpr bool kIdealLinks = false;      // [DESIGN] test 16 only: frames inside R always decode (the paper's near-error-free channel)
 constexpr double kShadowTickS = 5.0;     // [DESIGN] time grid of the process; see gm-shadowing.h
 } // namespace channel
 
@@ -213,6 +214,24 @@ constexpr double kBetaInflate = 0.7;     // [SPEC] S§8.11, on death / unplanned
 constexpr double kThetaScale = 1.0 / 1024.0; // [SPEC] S§6.3 int16 quantisation
 constexpr double kDiagScale = 1.0 / 16.0;    // [SPEC] S§6.3 uint16 quantisation
 } // namespace sharing
+
+// ------------------------------------------------- P0 (published ERGR-EMHC) ----
+// Al-Salti et al., Computer Networks 162 (2019) 106869. "Paper" = stated there; [CONFIRM] = our assumption.
+namespace p0
+{
+constexpr double kCellSizeM = 1500.0 / (2.0 * 1.7320508075688772); // [PAPER] d = R / (2 sqrt 3) = 433.0 m
+constexpr double kBeta = 0.9;              // [PAPER] Table 3: Hpkt = beta Hmin + (1 - beta) Hmax
+constexpr double kHmaxFactor = 2.0;        // [CONFIRM] Hmax = factor x Hmin (the paper does not define Hmax)
+constexpr double kIPeriodS = 50.0;         // [PAPER] Table 3 initialisation period
+constexpr double kUpdatePeriodS = 500.0;   // [PAPER] Table 3 update (Hello) period of a head
+constexpr double kNewElectionS = 400.0;    // [PAPER] Table 3 new election timer
+constexpr double kEnergyThresholdJ = 10.0; // [PAPER] Table 3 epsilon: a head below it sends Retire
+constexpr double kPriorityWeight = 0.5;    // [CONFIRM] w in P(i); "w in [0, 1]", value not given
+constexpr bool kRandomTimers = true;       // [CONFIRM] GBPR-style random election timers (the paper's eq. 4 uses the priority P(i))
+constexpr double kPositionCheckS = 5.0;    // [CONFIRM] how often a node checks whether it left its cell
+constexpr int kVoidRetryLimit = 3;         // [CONFIRM] NegAck-triggered re-selections
+constexpr double kNackProcS = 0.05;        // [CONFIRM] T_processing in eq. 10
+} // namespace p0
 
 // ------------------------------------------------------------- feature ----
 // Zero-based positions in the feature vector (spec S§8.1 x1..x9).

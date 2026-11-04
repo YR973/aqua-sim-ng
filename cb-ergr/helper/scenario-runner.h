@@ -20,6 +20,7 @@ namespace cbergr
 struct ScenarioSettings
 {
     // run
+    std::string protocol = "G";            // "G" = ERGR-EMHC-g, "P0" = ERGR-EMHC as published
     std::string selector = "RoundRobin";
     std::string flags = "";
     std::string selectorAttributes = "";   // "Name=value;Name=value" set on every selector, e.g. WithFeedback=true
@@ -34,6 +35,7 @@ struct ScenarioSettings
     int numSinks = params::scenario::kNumSinks;
     int payloadBytes = params::scenario::kPayloadBytes;
     double pktRateHz = params::scenario::kPktRatePerNodeHz;
+    int numSources = 0;                    // 0: every node generates traffic; k > 0: only k randomly chosen nodes (the paper uses 10)
     double dataStartS = params::timers::kDataStartS;
     // grid / election
     double boxSizeM = params::grid::kBoxSizeM;
@@ -50,6 +52,7 @@ struct ScenarioSettings
     double rangeM = params::phy::kTxRangeM;
     double bitRateBps = params::phy::kBitRateBps;
     double preambleS = params::phy::kPreambleS;
+    bool idealLinks = params::channel::kIdealLinks;
     double shadowSigmaDb = params::channel::kShadowSigmaDb;
     double shadowTauS = params::channel::kShadowTauS;
     // energy
