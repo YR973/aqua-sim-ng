@@ -1,0 +1,3 @@
+# A1 weights fitted by scripts/fit_a1.py on training seeds only; do not edit by hand.
+# rows=27401 from 7 runs
+SelectorAttributes = Weights=-0.609779,0.112113,-0.247620,3.016177,0.335483,-1.083640,-0.035449,1.235689,-4.345699

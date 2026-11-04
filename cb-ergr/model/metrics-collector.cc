@@ -461,6 +461,22 @@ MetricsCollector::OnDuplicateLabel(uint32_t node)
 }
 
 void
+MetricsCollector::OnRegret(double regret, bool multiViable)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    m_regretSum += regret;
+    m_regretCount++;
+    if (multiViable)
+    {
+        m_regretSumMulti += regret;
+        m_regretCountMulti++;
+    }
+}
+
+void
 MetricsCollector::OnAckSent(uint32_t node)
 {
     if (Counting())
@@ -782,7 +798,8 @@ MetricsCollector::WriteSummary()
          "energy_tx_j,energy_rx_j,energy_idle_j,rx_energy_share,fnd_s,hnd_s,jain_residual_energy,"
          "elections_per_hour,head_tenure_mean_s,attempts_total,retx_per_delivered,hop_success_truth,"
          "ar_rate,labels_total,label_ack_frac,label_acktimeout_frac,label_bitmap_frac,label_expiry_frac,"
-         "label_void_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels";
+         "label_void_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels,"
+         "decisions_scored,regret_mean,regret_mean_multi_viable,share_multi_viable";
     for (int r = 0; r < static_cast<int>(DropReason::kCount); ++r)
     {
         f << ",drop_" << Lower(DropReasonName(static_cast<DropReason>(r)));
@@ -825,7 +842,10 @@ MetricsCollector::WriteSummary()
         f << ',' << c / labels;
     }
     f << ',' << delayMean << ',' << delayP95 << ',' << (m_labelZeros ? double(m_falseNegatives) / m_labelZeros : 0.0)
-      << ',' << m_duplicateLabelsTotal;
+      << ',' << m_duplicateLabelsTotal << ',' << m_regretCount << ','
+      << (m_regretCount ? m_regretSum / m_regretCount : 0.0) << ','
+      << (m_regretCountMulti ? m_regretSumMulti / m_regretCountMulti : 0.0) << ','
+      << (m_regretCount ? double(m_regretCountMulti) / m_regretCount : 0.0);
     for (uint32_t c : m_dropCounts)
     {
         f << ',' << c;

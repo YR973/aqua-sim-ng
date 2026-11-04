@@ -50,6 +50,11 @@ class ErgrEmhcRouting : public AquaSimRouting
     void SetLocalisation(Ptr<LocalisationNoise> noise) { m_localisation = noise; }
     /// The node's own modem link budget (for selectors that predict margins).
     void SetLinkModel(std::shared_ptr<const AcousticLinkModel> link) { m_linkModel = link; }
+    /// Called after every selector decision (used to measure regret against the oracle). Must not change state.
+    void SetDecisionObserver(std::function<void(const PacketCtx&, const std::vector<Candidate>&, const Decision&, Time)> observer)
+    {
+        m_decisionObserver = observer;
+    }
     /// Source of measured beacon SNR (RSSI): (sender node, my node, snr out) -> found?
     void SetSnrMeter(std::function<bool(uint32_t, uint32_t, double&)> meter) { m_snrMeter = meter; }
 
@@ -183,6 +188,7 @@ class ErgrEmhcRouting : public AquaSimRouting
     Ptr<ForwarderSelector> m_selector;
     std::shared_ptr<const AcousticLinkModel> m_linkModel;
     std::function<bool(uint32_t, uint32_t, double&)> m_snrMeter;
+    std::function<void(const PacketCtx&, const std::vector<Candidate>&, const Decision&, Time)> m_decisionObserver;
     Ptr<MetricsCollector> m_metrics;
     Ptr<LocalisationNoise> m_localisation;
     Ptr<UniformRandomVariable> m_uniform;

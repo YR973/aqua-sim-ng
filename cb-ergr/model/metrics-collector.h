@@ -147,6 +147,8 @@ class MetricsCollector : public Object
                  bool learn,
                  const Decision& decision);
     void OnDuplicateLabel(uint32_t node);
+    /// Regret of one decision against the oracle (>= 0); 'multiViable' = at least two candidates had margin > 0.
+    void OnRegret(double regret, bool multiViable);
     void OnAckSent(uint32_t node);
     void OnAckReceived(uint32_t node);
 
@@ -270,6 +272,8 @@ class MetricsCollector : public Object
     double m_labelDelaySumS = 0.0;
     std::vector<double> m_labelDelays;
     uint64_t m_arAttempts = 0, m_duplicateLabelsTotal = 0;
+    double m_regretSum = 0.0, m_regretSumMulti = 0.0;
+    uint64_t m_regretCount = 0, m_regretCountMulti = 0;
     std::array<uint64_t, kNumFrameTypes> m_totalFramesTx{};
     std::array<uint64_t, kNumFrameTypes> m_totalBytesTx{};
     uint64_t m_electionsAfterWarmup = 0;

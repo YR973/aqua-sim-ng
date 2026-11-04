@@ -9,6 +9,7 @@
 
 #include "acoustic-link-model.h"
 #include "ergr-headers.h"
+#include "oracle-evaluator.h"
 #include "neighbour-table.h"
 
 #include "ns3/nstime.h"
@@ -120,6 +121,9 @@ class ForwarderSelector : public Object
 
     /// Called once before Start() so the selector can reach its node's services.
     virtual void SetServices(const SelectorServices& services) {}
+
+    /// Only the oracle selectors override this; every learner ignores it, so a learner cannot read ground truth.
+    virtual void SetOracle(Ptr<OracleEvaluator> oracle) {}
 
     /// Called at time 0 (start timers here).
     virtual void Start() {}

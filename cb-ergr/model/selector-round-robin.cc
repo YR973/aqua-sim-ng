@@ -34,6 +34,15 @@ SelectorRoundRobin::GetTypeId()
     return tid;
 }
 
+void
+SelectorRoundRobin::SetServices(const SelectorServices& services)
+{
+    if (services.link)
+    {
+        m_features = std::make_unique<FeatureBuilder>(services.link, params::learner::kMarginFromRssi);
+    }
+}
+
 Decision
 SelectorRoundRobin::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligible, Time now)
 {
@@ -55,6 +64,15 @@ SelectorRoundRobin::Select(const PacketCtx& pkt, const std::vector<Candidate>& e
     m_lastId = chosen->id;
 
     d.fwdId = chosen->id;
+    if (m_features)
+    {
+        // For the decision log (and for fitting A1 offline); the choice above did not use these numbers.
+        FeatureBuilder::Features x = m_features->Build(pkt, *chosen->nb, params::phy::kNumPowerLevels - 1, now);
+        for (int i = 0; i < FeatureBuilder::kDim; ++i)
+        {
+            d.x[i] = x[i];
+        }
+    }
     d.powerLevel = params::phy::kNumPowerLevels - 1; // full power
     d.ackRequest = m_withFeedback && m_requestAck;   // no hop ACKs in the published protocol
     d.valid = true;

@@ -872,6 +872,10 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
         return;
     }
     decision.numCandidates = static_cast<uint8_t>(eligible.size());
+    if (m_decisionObserver)
+    {
+        m_decisionObserver(ctx, eligible, decision, now);
+    }
     SendData(pkt, decision.fwdId, decision.powerLevel, decision.ackRequest, &decision);
     m_selector->OnSent(decision, now);
 }

@@ -58,6 +58,8 @@ struct ScenarioSettings
     double currentSpeed = params::mobility::kCurrentSpeedMps;
     double locErrM = params::mobility::kLocErrM;
     double velErrMps = params::mobility::kVelErrMps;
+    bool regretAllPowerLevels = false;     // regret may use lower power levels (set when the method controls power)
+    bool computeRegret = true;             // measure regret against the oracle at every decision
     // logging
     bool logNodes = params::logging::kLogNodes;
     bool logLinks = params::logging::kLogLinks;

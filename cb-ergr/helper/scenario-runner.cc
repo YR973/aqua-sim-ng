@@ -12,6 +12,8 @@
 #include "ns3/ergr-emhc-routing.h"
 #include "ns3/localisation-noise.h"
 #include "ns3/mobility-module.h"
+#include "ns3/cb-features.h"
+#include "ns3/oracle-evaluator.h"
 #include "ns3/selector-cb-v5.h"
 #include "ns3/network-module.h"
 
@@ -61,6 +63,8 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("CurrentSpeed", &s.currentSpeed, "Ocean current speed scale U (m/s)");
     c.Add("LocErrM", &s.locErrM, "Position error std per axis (m)");
     c.Add("VelErrMps", &s.velErrMps, "Velocity error std per axis (m/s)");
+    c.Add("RegretAllPowerLevels", &s.regretAllPowerLevels, "Regret compares against all power levels (use with EnablePower=true)");
+    c.Add("ComputeRegret", &s.computeRegret, "Measure regret against the oracle at every decision");
     c.Add("LogNodes", &s.logNodes, "Write nodes.csv");
     c.Add("LogLinks", &s.logLinks, "Write links.csv");
     c.Add("LogPackets", &s.logPackets, "Write packets.csv");
@@ -72,6 +76,51 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
 
 namespace
 {
+// Regret of one decision: best utility over all (candidate, power level) options under the TRUE channel, minus the
+// utility of the chosen option, with the same energy price the selector used. Never feeds back into a decision.
+std::function<void(const PacketCtx&, const std::vector<Candidate>&, const Decision&, Time)>
+MakeRegretObserver(Ptr<OracleEvaluator> oracle,
+                   std::shared_ptr<const AcousticLinkModel> link,
+                   Ptr<MetricsCollector> metrics,
+                   uint32_t nodeId,
+                   const ScenarioSettings& s)
+{
+    auto features = std::make_shared<FeatureBuilder>(link, params::learner::kMarginFromRssi);
+    const double bitRate = s.bitRateBps;
+    const double preamble = s.preambleS;
+    const double txFull = s.txPowerFullW;
+    const bool allLevels = s.regretAllPowerLevels;
+    return [=](const PacketCtx& ctx, const std::vector<Candidate>& cands, const Decision& d, Time now) {
+        const double airtimeS = preamble + ctx.dataBytes * 8.0 / bitRate;
+        auto utility = [&](const Candidate& c, int level) {
+            double success = oracle->HopSuccess(nodeId, c.id, level, ctx.dataBytes, now, true);
+            double progress = 1.0 - params::learner::kKappaP + params::learner::kKappaP * ((c.nb->hmin < ctx.hpkt) ? 1.0 : 0.0);
+            double etx = txFull * params::phy::kTxPowerLevelScale[level] * airtimeS;
+            return success * progress - d.lambdaE * etx;
+        };
+        double best = -1e300, chosen = 0.0;
+        int viable = 0;
+        for (const Candidate& c : cands)
+        {
+            // A method without power control can only use the full level, so it is only compared with that.
+            const int firstLevel = allLevels ? 0 : params::phy::kNumPowerLevels - 1;
+            for (int level = firstLevel; level < params::phy::kNumPowerLevels; ++level)
+            {
+                best = std::max(best, utility(c, level));
+            }
+            if (c.id == d.fwdId)
+            {
+                chosen = utility(c, d.powerLevel);
+            }
+            if (features->PredictedMarginDb(ctx, *c.nb, params::phy::kNumPowerLevels - 1, now) > 0.0)
+            {
+                viable++;
+            }
+        }
+        metrics->OnRegret(std::max(0.0, best - chosen), viable >= 2);
+    };
+}
+
 // Sinks sit on the surface on a regular grid; 4 sinks end up at the quarter points (spec §5.2).
 Vector
 SinkPosition(int index, int numSinks, double boxM)
@@ -138,6 +187,12 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     localisation->SetAttribute("LocErrM", DoubleValue(s.locErrM));
     localisation->SetAttribute("VelErrMps", DoubleValue(s.velErrMps));
 
+    // Ground truth for the oracles and the regret measurement: the only users of true positions/shadowing.
+    auto linkModel = std::make_shared<AcousticLinkModel>(propagation->GetLinkModel());
+    Ptr<OracleEvaluator> oracle = CreateObject<OracleEvaluator>();
+    oracle->Configure([nodes](uint32_t id) { return nodes.Get(id)->GetObject<MobilityModel>()->GetPosition(); },
+                      propagation->GetShadowing(), linkModel, s.rangeM);
+
     std::vector<Ptr<ErgrEmhcRouting>> routings;
     int64_t stream = 1;
     stream += propagation->AssignStreams(stream);
@@ -197,7 +252,16 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetLocalisation(localisation);
 
         ObjectFactory selectorFactory;
-        selectorFactory.SetTypeId("ns3::cbergr::Selector" + s.selector);
+        // "GeoOracle" is the oracle class with GeoOnly switched on; every other name maps to Selector<Name>.
+        if (s.selector == "GeoOracle")
+        {
+            selectorFactory.SetTypeId("ns3::cbergr::SelectorOracle");
+            selectorFactory.Set("GeoOnly", BooleanValue(true));
+        }
+        else
+        {
+            selectorFactory.SetTypeId("ns3::cbergr::Selector" + s.selector);
+        }
         std::stringstream attrs(s.selectorAttributes);
         for (std::string item; std::getline(attrs, item, ';');)
         {
@@ -207,7 +271,13 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
                 selectorFactory.Set(item.substr(0, eq), StringValue(item.substr(eq + 1)));
             }
         }
-        routing->SetSelector(selectorFactory.Create<ForwarderSelector>());
+        Ptr<ForwarderSelector> selector = selectorFactory.Create<ForwarderSelector>();
+        selector->SetOracle(oracle); // only the oracle selectors keep it
+        routing->SetSelector(selector);
+        if (s.computeRegret)
+        {
+            routing->SetDecisionObserver(MakeRegretObserver(oracle, linkModel, metrics, node->GetId(), s));
+        }
         routing->SetLinkModel(std::make_shared<AcousticLinkModel>(propagation->GetLinkModel()));
         routing->SetSnrMeter([propagation](uint32_t tx, uint32_t rx, double& snr) {
             return propagation->MeasuredBeaconSnrDb(tx, rx, snr);

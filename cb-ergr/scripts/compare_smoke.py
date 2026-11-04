@@ -20,8 +20,22 @@ VARIANTS = {
     "QL": ("QLearning", ""),
     "CARP": ("CarpEwma", ""),
     "LinQ": ("LfaQ", ""),
+    "O": ("Oracle", ""),
+    "GO": ("GeoOracle", ""),
 }
-COLUMNS = ["pdr", "delay_mean_s", "attempts_total", "retx_per_delivered", "hop_success_truth", "ar_rate",
+def a1_attributes():
+    """A1 weights written by fit_a1.py (configs/a1-weights.txt); empty if the file does not exist yet."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configs", "a1-weights.txt")
+    if not os.path.exists(path):
+        return ""
+    for line in open(path):
+        if line.startswith("SelectorAttributes"):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+VARIANTS["A1"] = ("FittedLogistic", a1_attributes())
+COLUMNS = ["pdr", "regret_mean", "regret_mean_multi_viable", "share_multi_viable", "delay_mean_s", "attempts_total", "retx_per_delivered", "hop_success_truth", "ar_rate",
            "ack_frames_per_delivered", "label_ack_frac", "false_negative_rate",
            "ctrl_bytes_total_per_delivered", "energy_per_delivered_j"]
 

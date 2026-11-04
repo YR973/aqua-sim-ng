@@ -2,8 +2,8 @@
 
 This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code keeps it in sync with the code (`doc/CODE-GUIDE.md`). If a file named here doesn't exist, check `doc/CHANGELOG.md` for a rename.
 
-> **Build status (kept up to date by Claude Code; last update: end of step D6a).**
-> Working now: the whole substrate (ERGR-EMHC-g) with the `RoundRobin` selector, the SNR channel, metrics and CSVs, `cb-ergr-scenario`, and the learner maths as a pure-C++ library with tests. Hop ACKs, receipt bitmaps and retries (`FeedbackManager`) work, shown by `Selector=RoundRobin --SelectorAttributes="WithFeedback=true"` (RR+FB). `Selector=CbV5` works (`model/selector-cb-v5.{h,cc}`; functions `BuildFeatures`, `Score`, `NeedsAck`, `Select`, `OnSent`, `OnLabel`, `OnBeaconTx/Rx`; forgetting is `BeginDecision` in `cb-learner-model.h`). Baselines `FixedWeight`, `QLearning`, `CarpEwma`, `LfaQ` work (one file each, same two methods `Select` and `OnLabel`). **Not written yet:** A1 and the oracles, handover, head-failure injection, N-A/N-C and the power patch (D7).
+> **Build status (kept up to date by Claude Code; last update: end of step D6b).**
+> Working now: the whole substrate (ERGR-EMHC-g) with the `RoundRobin` selector, the SNR channel, metrics and CSVs, `cb-ergr-scenario`, and the learner maths as a pure-C++ library with tests. Hop ACKs, receipt bitmaps and retries (`FeedbackManager`) work, shown by `Selector=RoundRobin --SelectorAttributes="WithFeedback=true"` (RR+FB). `Selector=CbV5` works (`model/selector-cb-v5.{h,cc}`; functions `BuildFeatures`, `Score`, `NeedsAck`, `Select`, `OnSent`, `OnLabel`, `OnBeaconTx/Rx`; forgetting is `BeginDecision` in `cb-learner-model.h`). Baselines `FixedWeight`, `QLearning`, `CarpEwma`, `LfaQ` work (one file each, same two methods `Select` and `OnLabel`). `FittedLogistic` (A1; weights from `scripts/fit_a1.py`), `Oracle` and `GeoOracle` work, and every run reports regret against the oracle (`--ComputeRegret`). **Not written yet:** handover, head-failure injection, N-A/N-C and the power patch (D7).
 >
 > **Where things are now** (all under `contrib/cb-ergr/`):
 >
@@ -12,6 +12,7 @@ This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code
 > | `model/cb-ergr-params.h` | Every default value (the only place) |
 > | `model/ergr-emhc-routing.{h,cc}` | Per-node routing: beacons, election, Hmin, eligible list (`GetEligible`), forwarding, member hand-off, void NACK |
 > | `model/selector-cb-v5.{h,cc}` | **The method**: features, Thompson sample, score, ACK gate, learning, sharing (read this one) |
+> | `model/oracle-evaluator.*`, `selector-oracle.*` | True-world hop success; the oracle selectors. **The only code allowed to read ground truth** |
 > | `model/cb-features.{h,cc}` | The 9 features, shared by CB, FW, LinQ |
 > | `model/selector-fixed-weight`, `selector-q-learning`, `selector-carp-ewma`, `selector-lfa-q` | The baselines (`Selector=FixedWeight|QLearning|CarpEwma|LfaQ`) |
 > | `model/forwarder-selector.{h,cc}`, `selector-round-robin.{h,cc}` | The interface and the round-robin method (attributes `WithFeedback`, `AckRequest`) |

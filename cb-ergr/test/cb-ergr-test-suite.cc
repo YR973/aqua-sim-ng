@@ -11,10 +11,12 @@
 #include "ns3/cb-ergr-helper.h"
 #include "ns3/ergr-emhc-routing.h"
 #include "ns3/mobility-module.h"
+#include "ns3/oracle-evaluator.h"
 #include "ns3/selector-carp-ewma.h"
 #include "ns3/selector-cb-v5.h"
 #include "ns3/selector-fixed-weight.h"
 #include "ns3/selector-lfa-q.h"
+#include "ns3/selector-oracle.h"
 #include "ns3/selector-q-learning.h"
 #include "ns3/selector-round-robin.h"
 #include "ns3/aqua-sim-phy-cmn.h"
@@ -1872,6 +1874,107 @@ class LinearQMovesItsWeightsTowardTheTarget : public TestCase
     }
 };
 
+
+// Oracle evaluator (§11 O/GO): true-world hop success is the link model at the true distance and shadowing.
+class OracleSuccessMatchesTheLinkModel : public TestCase
+{
+  public:
+    OracleSuccessMatchesTheLinkModel()
+        : TestCase("D6: OracleEvaluator hop success = 1 - PER at the true distance")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto link = std::make_shared<AcousticLinkModel>();
+        Ptr<GmShadowing> shadowing = CreateObject<GmShadowing>();
+        shadowing->SetBaseSeed(11);
+        Ptr<OracleEvaluator> oracle = CreateObject<OracleEvaluator>();
+        oracle->Configure([](uint32_t id) { return Vector(id == 0 ? 0.0 : (id == 1 ? 750.0 : 1600.0), 0, 0); },
+                          shadowing, link, 1500.0);
+        const Time t = Seconds(100);
+        double geo = oracle->HopSuccess(0, 1, 2, 167, t, false);
+        double expected = 1.0 - link->PerFromSnr(link->SnrDb(link->FullSourceLevelDb(), 750.0, 0.0), 167);
+        NS_TEST_ASSERT_MSG_EQ_TOL(geo, expected, 1e-12, "geometry-only value");
+        double withShadow = oracle->HopSuccess(0, 1, 2, 167, t, true);
+        double shadowDb = shadowing->GetShadowDb(0, 1, t);
+        double expectedShadow =
+            1.0 - link->PerFromSnr(link->SnrDb(link->FullSourceLevelDb(), 750.0, shadowDb), 167);
+        NS_TEST_ASSERT_MSG_EQ_TOL(withShadow, expectedShadow, 1e-12, "value with the true shadowing");
+        NS_TEST_ASSERT_MSG_EQ_TOL(oracle->HopSuccess(0, 2, 2, 167, t, true), 0.0, 0.0, "beyond the range: zero");
+        NS_TEST_ASSERT_MSG_EQ((oracle->HopSuccess(0, 1, 0, 167, t, false) < geo), true, "lower power, lower success");
+        NS_TEST_ASSERT_MSG_EQ_TOL(oracle->Distance(0, 1), 750.0, 1e-12, "distance");
+    }
+};
+
+class OracleSelectorPicksTheTrulyBestHop : public TestCase
+{
+  public:
+    OracleSelectorPicksTheTrulyBestHop()
+        : TestCase("D6: O and GO pick the best true hop")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto link = std::make_shared<AcousticLinkModel>();
+        Ptr<GmShadowing> shadowing = CreateObject<GmShadowing>();
+        shadowing->SetAttribute("ShadowSigmaDb", DoubleValue(0.0));
+        Ptr<OracleEvaluator> oracle = CreateObject<OracleEvaluator>();
+        // node 1 (me) at the origin, node 2 at 600 m, node 3 at 1400 m, both equally "progressing"
+        oracle->Configure([](uint32_t id) { return Vector(id == 1 ? 0.0 : (id == 2 ? 600.0 : 1400.0), 0, 0); },
+                          shadowing, link, 1500.0);
+        Ptr<SelectorOracle> o = MakeBaseline<SelectorOracle>("ns3::cbergr::SelectorOracle", "");
+        o->SetOracle(oracle);
+        SelectorServices services;
+        services.nodeId = 1;
+        o->SetServices(services);
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry near = MakeNeighbour(2, 0.0);
+        NeighbourEntry far = MakeNeighbour(3, 0.0);
+        std::vector<Candidate> eligible = {{2, &near}, {3, &far}};
+        Decision d = o->Select(ctx, eligible, Seconds(100));
+        NS_TEST_ASSERT_MSG_EQ(int(d.fwdId), 2, "the near node has the better link");
+        NS_TEST_ASSERT_MSG_EQ((d.pMean > 0.9), true, "reported success is the true probability");
+        NS_TEST_ASSERT_MSG_EQ(d.ackRequest, true, "same feedback as the other methods");
+
+        // Without an oracle there is no decision (a learner can never get one).
+        Ptr<SelectorOracle> blind = MakeBaseline<SelectorOracle>("ns3::cbergr::SelectorOracle", "");
+        blind->SetServices(services);
+        NS_TEST_ASSERT_MSG_EQ(blind->Select(ctx, eligible, Seconds(100)).valid, false, "no oracle, no decision");
+    }
+};
+
+class FittedLogisticUsesItsOfflineWeights : public TestCase
+{
+  public:
+    FittedLogisticUsesItsOfflineWeights()
+        : TestCase("D6: A1 parses its weights and applies the fixed logistic rule")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        // Only the margin matters (weight 10 on x8), everything else zero.
+        Ptr<SelectorFittedLogistic> a1 = MakeBaseline<SelectorFittedLogistic>(
+            "ns3::cbergr::SelectorFittedLogistic", "Weights=0,0,0,0,0,0,0,10,-3");
+        AcousticLinkModel link;
+        PacketCtx ctx = MakeCtx();
+        double snrReq = link.SnrReqDb(ctx.dataBytes);
+        NeighbourEntry strong = MakeNeighbour(51, snrReq + 15.0);
+        NeighbourEntry weak = MakeNeighbour(52, snrReq - 5.0);
+        std::vector<Candidate> eligible = {{52, &weak}, {51, &strong}};
+        Decision d = a1->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ(int(d.fwdId), 51, "stronger margin wins");
+        NS_TEST_ASSERT_MSG_EQ_TOL(a1->Weights()[7], 10.0, 1e-12, "weight parsed");
+        double expectedLogit = 10.0 * d.x[7] - 3.0;
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.pMean, Sigmoid(expectedLogit), 1e-12, "sigmoid(w . x)");
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -1914,6 +2017,9 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new CarpEwmaFollowsItsUpdateRule, TestCase::QUICK);
         AddTestCase(new QLearningUpdatesAndAdvertisesItsValue, TestCase::QUICK);
         AddTestCase(new LinearQMovesItsWeightsTowardTheTarget, TestCase::QUICK);
+        AddTestCase(new OracleSuccessMatchesTheLinkModel, TestCase::QUICK);
+        AddTestCase(new OracleSelectorPicksTheTrulyBestHop, TestCase::QUICK);
+        AddTestCase(new FittedLogisticUsesItsOfflineWeights, TestCase::QUICK);
     }
 };
 

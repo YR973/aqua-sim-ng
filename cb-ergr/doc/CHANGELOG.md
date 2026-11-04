@@ -2,6 +2,25 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 22:00 — D6b oracles (O, GO), regret, offline-fitted A1
+- What: new `oracle-evaluator.{h,cc}` (the only reader of true positions/shadowing), `selector-oracle.{h,cc}` (`Oracle`, and `GeoOracle` = GeoOnly), `SelectorFittedLogistic` (A1) next to `SelectorFixedWeight` sharing `SelectByWeights`, `scripts/fit_a1.py`, `configs/a1-weights.txt`; a decision observer in routing, `OnRegret` in the metrics and four summary columns (`decisions_scored`, `regret_mean`, `regret_mean_multi_viable`, `share_multi_viable`); RoundRobin now logs the features of its chosen option (for the fit; the choice does not use them). 3 new tests (39 cases pass).
+- Why: kickoff §2.4 / §4 D6, spec §11 O, GO, A1 and §13.1 regret.
+- Effect on results: none on existing methods.
+- Spec/design deviation:
+  1. **Regret definition.** U(j, p) = trueSuccess(j, p) x progressWeight - lambdaE x Etx(p), with the energy price the evaluated method itself used; regret = best U over all candidates minus U of the chosen option, floored at 0, with the true shadowing at decision time and collisions ignored. Options are limited to the full power level unless `RegretAllPowerLevels=true` (the first version let the oracle use cheaper power levels that CB could not choose, which inflated CB's regret to 1.7 - fixed). `multi_viable` = at least two candidates with predicted margin > 0.
+  2. **O/GO use ACK requests and retries like every other method** (same feedback path), so their PDR is below a perfect-knowledge bound for the whole system; the regret column is the clean per-decision measure.
+  3. **A1 is fitted on round-robin-with-feedback logs of training seeds 101-107** (27401 head decisions) with the learner's own prior (lambda0 = 1), and evaluated on held-out training seeds 108-110. `fit_a1.py` refuses file names that look like test seeds and refuses logs without features (the first fit returned all zeros because RR did not log features: caught by reading the result, fixed in both places).
+- Result (held-out training seeds 108-110, N = 100, 2500 s, 0.004 pkt/s, E0 = 10000 J; `results/reference/d5-smoke/compare_a1_heldout_seeds108-110.csv`):
+  | method | PDR | regret |
+  |---|---|---|
+  | RR + feedback | 0.475 | 0.190 |
+  | CB | 0.534 | 0.146 |
+  | A1 (fitted offline) | 0.563 | 0.081 |
+  | FW (hand-set) | 0.584 | 0.069 |
+  | O (oracle) | 0.641 | 0.000 |
+  On the seeds 101-103 run: GO 0.527 (regret 0.10), O 0.626. Ordering by regret matches ordering by PDR for all methods.
+- Reading: static rules on these features (hand-set or fitted) beat CB over 2500 s; the learner has not accumulated enough evidence per head. The gap to the oracle (0.64) shows how much the true shadowing is worth beyond the features (the measured beacon SNR only partly captures it).
+
 ## 2026-11-05 18:00 — D6a baselines: FixedWeight, QLearning, CarpEwma, LfaQ; shared feature builder
 - What: new `cb-features.{h,cc}` (the 9 features, moved out of `SelectorCbV5` unchanged), `selector-fixed-weight`, `selector-q-learning`, `selector-carp-ewma`, `selector-lfa-q`; optional 2-byte value on beacons (`hasQ`); `Decision::aux`, `NeighbourEntry::advertisedQ`; 4 tests (36 cases pass); more variants in `scripts/compare_smoke.py`.
 - Why: kickoff §2.4 and §4 D6. All use the same eligibility, feedback manager and overhead accounting.
