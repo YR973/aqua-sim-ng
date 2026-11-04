@@ -3,7 +3,7 @@
  *
  * Change a default here, rebuild once, and every class and script picks it up.
  * A run can still override any value without rebuilding:
- *     header default  <  configs/*.txt (--ConfigFile=...)  <  command line.
+ *     header default  <  configs/<name>.txt (--ConfigFile=...)  <  command line.
  *
  * Status tags on each value:
  *   [SPEC]    implementation spec v5 (docs/cb-ergr-v5-implementation-spec.md), "S§"
@@ -48,6 +48,9 @@ constexpr double kBandwidthHz = 5000.0;  // [SPEC] S§4.4 B
 constexpr double kSpreadingK = 1.5;      // [SPEC] S§4.4 spreading factor
 constexpr double kShippingActivity = 0.5; // [SPEC] S§4.4 s
 constexpr double kWindSpeedMps = 5.0;    // [SPEC] S§4.4 w
+constexpr double kReferenceAcousticPtW = 0.2818; // upstream PT default; the 'full' level. Level k scales it by kTxPowerLevelScale[k]
+constexpr double kRxThreshold = 0.5;     // PHY RXThresh; propagation reports pR = 1 (ok) or 0 (lost), see cb-ergr-propagation.h
+constexpr double kCalibFrameBytes = 150.0; // [SPEC] S§4.4 frame length used to calibrate the source level
 constexpr double kCalibPer = 0.5;        // [SPEC] S§4.4 data PER at R, mean shadowing, full power
 constexpr double kSnrReqPer = 0.1;       // [SPEC] S§8.2 PER used to define SnrReqDb
 constexpr int kNumPowerLevels = 3;       // [SPEC] S§4.3
@@ -69,6 +72,7 @@ namespace channel
 {
 constexpr double kShadowSigmaDb = 5.0;   // [SPEC] S§4.5
 constexpr double kShadowTauS = 120.0;    // [SPEC] S§4.5
+constexpr double kShadowTickS = 5.0;     // [DESIGN] time grid of the process; see gm-shadowing.h
 } // namespace channel
 
 // ------------------------------------------------------------ mobility ----

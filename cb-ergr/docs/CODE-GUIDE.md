@@ -2,6 +2,10 @@
 
 This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code keeps it in sync with the code (`doc/CODE-GUIDE.md`). If a file named here doesn't exist, check `doc/CHANGELOG.md` for a rename.
 
+> **Build status (kept up to date by Claude Code).** Written so far: the learner maths (`cb-learner-model.h`, `small-matrix.h`, `receipt-window.h`, `serial-number.h`, `energy-price.h`), the channel (`acoustic-link-model.*`, `gm-shadowing.*`, `cb-ergr-propagation.*`), `helper/cb-ergr-helper.*`, `model/cb-ergr-params.h`, and the examples `cb-ergr-smoke` and `link-per-curve`. The routing, selectors, feedback manager and `cb-ergr-scenario` named below do not exist yet (steps D3-D5); run `./ns3 run link-per-curve` today to see the channel. Learner functions are currently named after the model: `BeginDecision` (forgetting, §8.3), `SampleTheta`/`Width` (§8.4/§8.6), `AddSendEvidence` (§8.7), `UpdateWithLabel` (§8.8).
+>
+> **Upstream Aqua-Sim files we patched** (all off by default, see `doc/PATCHES.md`): `model/aqua-sim-phy-cmn.{h,cc}`, `model/aqua-sim-energy-model.{h,cc}`.
+
 **The rule of thumb:** of the roughly 25 files in `contrib/cb-ergr/`, you only need **6** to understand the thesis. The rest are plumbing (headers, timers, matrix maths, the channel model) that you read only when something looks wrong.
 
 ---

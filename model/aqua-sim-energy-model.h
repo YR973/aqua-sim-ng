@@ -77,6 +77,11 @@ public:
   double GetIdlePower(void);
   double GetEnergy(void);
   double GetInitialEnergy(void);
+  ///CB-ERGR bookkeeping (additive, does not change behaviour): joules drawn per state, and death time
+  double GetTxEnergyJ(void) const { return m_txEnergyJ; }
+  double GetRxEnergyJ(void) const { return m_rxEnergyJ; }
+  double GetIdleEnergyJ(void) const { return m_idleEnergyJ; }
+  double GetDeathTimeS(void) const { return m_deathTimeS; }  //-1 while alive
   ///To be called after an event occurs
   void DecrIdleEnergy(double t);
   void DecrRcvEnergy(double t);
@@ -95,6 +100,11 @@ private:
          m_txP,   // power consumption for transmission (W)
          m_idleP; // idle power consumption (W)
   double m_totalEnergyConsumption;	//if energy recharging where incorporated
+  double m_txEnergyJ = 0.0;     //CB-ERGR: energy drawn while transmitting (J)
+  double m_rxEnergyJ = 0.0;     //CB-ERGR: energy drawn while receiving (J)
+  double m_idleEnergyJ = 0.0;   //CB-ERGR: energy drawn while idle (J)
+  double m_deathTimeS = -1.0;   //CB-ERGR: time energy first reached 0, -1 while alive
+  void RecordDraw(double dEng, double& bucket);  //CB-ERGR bookkeeping helper
 
   Ptr<AquaSimNetDevice> m_device;
   Ptr<EnergySource> m_source;

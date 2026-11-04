@@ -10,17 +10,23 @@ built with ns-3.41.
 
 ## 1. Upstream file changes
 
-| # | File | Change | Guard Attribute | Spec | Milestone |
+All patches are guarded by a PHY Attribute that defaults to **false = upstream behaviour**, except the pure bookkeeping in P4 (no behaviour change). `CbErgrHelper::ConfigureHelper` turns P1-P3 on for CB-ERGR runs. The four files use CRLF line endings; edits preserve them.
+
+| # | File | Change | Guard | Spec | Step |
 |---|---|---|---|---|---|
-| — | — | none yet | — | — | M0 |
+| P1 | `model/aqua-sim-phy-cmn.{h,cc}` | `CalcTxTime` used `Time::FromInteger(Preamble(), Time::S)`, which truncates a fractional preamble to whole seconds. With `ExactPreamble` it uses `Seconds(Preamble())`. Also removed the `inline` keyword from the `CalcTxTime`/`CalcPktSize` declarations: they are defined in the .cc, so other libraries (our tests) could not link to them. | `ExactPreamble` (PhyCmn) | §4.1 | D2 |
+| P2 | `model/aqua-sim-phy-cmn.cc` | `PrevalidateIncomingPkt` charged receive energy for `asHeader.GetTxTime()`, but the channel has overwritten that field with the **propagation delay**, so upstream charges Rx energy for the delay (about 0.3 s at 450 m) instead of the frame airtime. With `RxEnergyUsesAirtime` it charges `CalcTxTime(size)`. | `RxEnergyUsesAirtime` | §4.3, K§2.2 | D2 |
+| P3 | `model/aqua-sim-phy-cmn.cc` | `StampTxInfo` overwrote the energy model's TxPower with the **acoustic** Pt (`m_pT`, 0.2818 W) on every frame, so Tx energy was Pt x airtime. With `KeepEnergyTxPower` the configured electrical TxPower (2.0 W) is kept. | `KeepEnergyTxPower` | §4.3 | D2 |
+| P4 | `model/aqua-sim-energy-model.{h,cc}` | Bookkeeping only: joules drawn per state (`GetTxEnergyJ/GetRxEnergyJ/GetIdleEnergyJ`) and time the battery first reached 0 (`GetDeathTimeS`, -1 while alive). `DecrEnergy` (used by `StatusShift`) is counted as Tx. | none (no behaviour change) | §4.3, K§2.2 | D2 |
+
+Not an upstream change: SNR-based reception is the new subclass `cbergr::CbErgrPropagation` (`model/cb-ergr-propagation.*`), selected by `AquaSimChannelHelper::SetPropagation`. It reports each frame's fate to the unchanged PHY through the received-power field (1 = decodable, 0 = below `RXThresh = 0.5`), so Aqua-Sim's own collision, half-duplex and energy logic still apply.
 
 Planned:
 
-| # | File | Change | Guard Attribute | Spec |
+| # | File | Change | Guard | Spec |
 |---|---|---|---|---|
-| P1 | `model/aqua-sim-phy-cmn.cc` | `CalcTxTime`/`CalcPktSize`: `Time::FromInteger(Preamble(), Time::S)` → `Seconds(Preamble())` (no truncation) | to decide in M1: either unguarded bug-fix, or `ns3::AquaSimPhyCmn::ExactPreamble` (default false) | §4.1 |
-| P2 | `model/aqua-sim-phy-cmn.{h,cc}` | read `TxPowerLevelTag` at transmit time: set Pt for the frame, charge `P_tx[level] × airtime`, stamp `SL[level]` | tag present (frames without it use the full level) | §4.2 |
-| P3 | PHY / propagation | SNR-based reception decision (§4.4) — preferably as a subclass outside upstream files | `ns3::...::SnrReception` | §4.4 |
+| P5 | `model/aqua-sim-phy-cmn.{h,cc}` | `TxPowerLevelTag` read at transmit time: Pt, Tx energy and source level per frame (D7, optional per K§2.3) | tag present | §4.2 |
+| P6 | `model/aqua-sim-phy-cmn.cc` | Header-first receive N-A (D7, behind `HeaderFirstRx`) | `HeaderFirstRx` | D§4.2 |
 
 ## 2. API names checked against the source (spec §0.3)
 
@@ -50,3 +56,12 @@ Other notes:
 - `./ns3 run broadcastMAC_example` (upstream example) runs to completion ("fin.").
 - `./ns3 run cb-ergr-smoke` runs to completion.
 - `./test.py -s cb-ergr`: 1 of 1 passed.
+
+## 4. D2 acceptance (2026-11-04)
+
+- Spec test 10: 150 B at 5 kbit/s with TPre = 0.3 s gives 0.54 s (0.24 s with the patch off, as upstream). Passes.
+- `link-per-curve` runs the real stack (broadcast MAC, SNR propagation, collisions) for 2 static nodes:
+  - sigma = 0: simulated PER matches `AcousticLinkModel` (e.g. 1400 m: 0.1475 vs 0.1451; 1500 m: 0.46 vs 0.50; 400 frames per point).
+  - sigma = 5 dB: simulated PER matches the shadowing-averaged analytic PER within sampling error (e.g. 1000 m: 0.168 vs 0.179; 1500 m: 0.475 vs 0.505; 600 frames per point).
+  - Files: `results/reference/per_sigma0.csv`, `per_sigma5.csv`, `per_curve.png`.
+- The comparison is against the analytic model, **not the pilot** (pilot not supplied; see CONFIRM D1).

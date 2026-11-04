@@ -26,6 +26,7 @@
 #include "ns3/log.h"
 #include "ns3/double.h"
 #include "ns3/uinteger.h"
+#include "ns3/boolean.h"
 #include "ns3/pointer.h"
 #include "ns3/trace-source-accessor.h"
 
@@ -139,6 +140,18 @@ AquaSimPhyCmn::GetTypeId(void)
       DoubleValue(0),
       MakeDoubleAccessor(&AquaSimPhyCmn::m_trigger),
       MakeDoubleChecker<double>())
+    .AddAttribute("ExactPreamble", "CB-ERGR patch P1: use the exact (fractional) preamble in CalcTxTime instead of truncating it to whole seconds.",
+      BooleanValue(false),
+      MakeBooleanAccessor(&AquaSimPhyCmn::m_exactPreamble),
+      MakeBooleanChecker())
+    .AddAttribute("RxEnergyUsesAirtime", "CB-ERGR patch P2: charge receive energy for the frame airtime (upstream charges the propagation delay).",
+      BooleanValue(false),
+      MakeBooleanAccessor(&AquaSimPhyCmn::m_rxEnergyUsesAirtime),
+      MakeBooleanChecker())
+    .AddAttribute("KeepEnergyTxPower", "CB-ERGR patch P3: keep the energy model's TxPower instead of overwriting it with the acoustic Pt on every frame.",
+      BooleanValue(false),
+      MakeBooleanAccessor(&AquaSimPhyCmn::m_keepEnergyTxPower),
+      MakeBooleanChecker())
     .AddAttribute("PTLevel", "Level of transmitted signal power.",
       UintegerValue(0),
       MakeUintegerAccessor(&AquaSimPhyCmn::m_ptLevel),
@@ -365,7 +378,8 @@ AquaSimPhyCmn::StampTxInfo(Ptr<Packet> p)
   else
   {
 	  // EXPERIMENTAL !!! Consider the tx power in EM()
-	  EM()->SetTxPower(m_pT);
+	  if (!m_keepEnergyTxPower)   // CB-ERGR patch P3
+	    EM()->SetTxPower(m_pT);
   }
 
   p->AddHeader(mach);
@@ -446,6 +460,10 @@ AquaSimPhyCmn::PrevalidateIncomingPkt(Ptr<Packet> p)
   p->RemoveHeader(asHeader);
   NS_LOG_DEBUG ("TxTime=" << asHeader.GetTxTime());
   Time txTime = asHeader.GetTxTime();
+  // CB-ERGR patch P2: the channel overwrote TxTime with the propagation delay, so charge
+  // receive energy for the real airtime of the frame instead.
+  if (m_rxEnergyUsesAirtime)
+    txTime = CalcTxTime(asHeader.GetSize());
 
   if (GetNetDevice()->FailureStatus()) {
     NS_LOG_WARN("AquaSimPhyCmn: nodeId=" << GetNetDevice()->GetNode()->GetId() << " fails!\n");
@@ -789,8 +807,10 @@ Time
 AquaSimPhyCmn::CalcTxTime (uint32_t pktSize, std::string * modName)
 {
   //NS_ASSERT(modName == NULL);
+  // CB-ERGR patch P1: upstream truncates the preamble to whole seconds (Time::FromInteger).
+  Time preamble = m_exactPreamble ? Seconds(Preamble()) : Time::FromInteger(Preamble(), Time::S);
   return Time::FromDouble(m_modulations.find(m_modulationName)->second->TxTime(pktSize*8), Time::S)
-      + Time::FromInteger(Preamble(), Time::S);
+      + preamble;
 }
 
 double

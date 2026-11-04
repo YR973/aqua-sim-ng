@@ -5,14 +5,21 @@
  * comment naming the spec rule. Sections follow the build steps D0..D7.
  */
 
+#include "ns3/acoustic-link-model.h"
+#include "ns3/aqua-sim-phy-cmn.h"
+#include "ns3/boolean.h"
 #include "ns3/cb-learner-model.h"
 #include "ns3/cb-ergr-config.h"
+#include "ns3/double.h"
 #include "ns3/energy-price.h"
+#include "ns3/gm-shadowing.h"
 #include "ns3/receipt-window.h"
 #include "ns3/serial-number.h"
+#include "ns3/simulator.h"
 #include "ns3/small-matrix.h"
 #include "ns3/test.h"
 #include "ns3/type-id.h"
+#include "ns3/uinteger.h"
 
 #include <cmath>
 #include <random>
@@ -656,6 +663,154 @@ class CellPriorAveragesAcceptedPeers : public TestCase
     }
 };
 
+
+// ============================================================ D2 ===========
+
+// Spec test 10 (§4.1): with the preamble patch a 150 B frame at 5 kbit/s and TPre = 0.3 s lasts 0.54 s.
+class AirtimeIncludesTheExactPreamble : public TestCase
+{
+  public:
+    AirtimeIncludesTheExactPreamble()
+        : TestCase("D2 test10: airtime is preamble plus bits over rate (patch P1)")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<AquaSimPhyCmn> phy = CreateObject<AquaSimPhyCmn>();
+        phy->SetAttribute("Preamble", DoubleValue(0.3));
+        phy->Modulation(nullptr)->SetAttribute("SPS", UintegerValue(5000)); // 5 kbit/s, 1 bit/symbol
+
+        // Upstream behaviour (patch off): the 0.3 s preamble is truncated to 0 s.
+        NS_TEST_ASSERT_MSG_EQ_TOL(phy->CalcTxTime(150).GetSeconds(), 0.24, 1e-6, "upstream truncates");
+
+        phy->SetAttribute("ExactPreamble", BooleanValue(true));
+        NS_TEST_ASSERT_MSG_EQ_TOL(phy->CalcTxTime(150).GetSeconds(), 0.54, 1e-6, "0.3 + 0.24 s");
+
+        phy->SetAttribute("Preamble", DoubleValue(0.0));
+        NS_TEST_ASSERT_MSG_EQ_TOL(phy->CalcTxTime(150).GetSeconds(), 0.24, 1e-6, "TPre = 0");
+        phy->SetAttribute("Preamble", DoubleValue(1.0));
+        NS_TEST_ASSERT_MSG_EQ_TOL(phy->CalcTxTime(150).GetSeconds(), 1.24, 1e-6, "TPre = 1 s");
+        Simulator::Destroy();
+    }
+};
+
+// Spec §4.4: Thorp and Stojanovic values, and the source level is calibrated to PER = 0.5 at R.
+class LinkBudgetIsCalibratedAtRange : public TestCase
+{
+  public:
+    LinkBudgetIsCalibratedAtRange()
+        : TestCase("D2: link budget, calibration at R, monotone PER")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        AcousticLinkModel link;
+        // Thorp at 20 kHz: 0.11*400/401 + 44*400/4500 + 2.75e-4*400 + 0.003 = 4.1338 dB/km.
+        NS_TEST_ASSERT_MSG_EQ_TOL(AcousticLinkModel::ThorpDbPerKm(20.0), 4.133837, 1e-5, "Thorp");
+        double psd = AcousticLinkModel::NoisePsdDb(20.0, 0.5, 5.0);
+        NS_TEST_ASSERT_MSG_EQ((psd > 39.5 && psd < 41.5), true, "wind-dominated noise ~ 40 dB at 20 kHz");
+
+        // TL(1500 m) = 15 log10(1500) + 4.1338 * 1.5.
+        double expectedTl = 15.0 * std::log10(1500.0) + 4.133837 * 1.5;
+        NS_TEST_ASSERT_MSG_EQ_TOL(link.TransmissionLossDb(1500.0), expectedTl, 1e-4, "TL at R");
+
+        // Calibration: PER(150 B) = 0.5 at R with no shadowing at full power.
+        double sl = link.FullSourceLevelDb();
+        double snrAtR = link.SnrDb(sl, 1500.0, 0.0);
+        NS_TEST_ASSERT_MSG_EQ_TOL(link.PerFromSnr(snrAtR, 150), 0.5, 1e-9, "PER(R) = 0.5");
+
+        // PER rises with distance and falls with power.
+        double previous = -1.0;
+        for (double d = 100.0; d <= 1500.0; d += 100.0)
+        {
+            double per = link.PerFromSnr(link.SnrDb(sl, d, 0.0), 150);
+            NS_TEST_ASSERT_MSG_EQ((per >= previous), true, "PER non-decreasing in distance");
+            previous = per;
+        }
+        double perFull = link.PerFromSnr(link.SnrDb(link.SourceLevelDb(0.2818), 1400.0, 0.0), 150);
+        double perQuarter = link.PerFromSnr(link.SnrDb(link.SourceLevelDb(0.2818 * 0.25), 1400.0, 0.0), 150);
+        NS_TEST_ASSERT_MSG_EQ((perQuarter > perFull), true, "lower power, more loss");
+        NS_TEST_ASSERT_MSG_EQ_TOL(link.SourceLevelDb(0.2818 * 0.25), sl - 6.0206, 1e-3, "quarter power = -6 dB");
+
+        // SnrReqDb is the SNR at which PER = 0.1; margin at R is therefore slightly negative.
+        NS_TEST_ASSERT_MSG_EQ_TOL(link.PerFromSnr(link.SnrReqDb(150), 150), 0.1, 1e-9, "SnrReq gives PER 0.1");
+        NS_TEST_ASSERT_MSG_EQ((link.MarginDb(sl, 1500.0, 150) < 0.0), true, "margin at R < 0");
+        NS_TEST_ASSERT_MSG_EQ((link.MarginDb(sl, 500.0, 150) > 5.0), true, "comfortable margin at 500 m");
+
+        // Longer frames fail more often at the same SNR.
+        NS_TEST_ASSERT_MSG_EQ((link.PerFromSnr(snrAtR, 300) > link.PerFromSnr(snrAtR, 150)), true, "length");
+        // Shorter frames (beacons, ACKs) are more robust: ACK of 6 B at R.
+        NS_TEST_ASSERT_MSG_EQ((link.PerFromSnr(snrAtR, 6) < 0.05), true, "short frames survive at R");
+    }
+};
+
+// Spec §4.5: stationary std and mean, correlation e^-1 at one tau, symmetry, and order independence.
+class ShadowingIsGaussMarkovAndAccessOrderFree : public TestCase
+{
+  public:
+    ShadowingIsGaussMarkovAndAccessOrderFree()
+        : TestCase("D2: shadowing statistics, symmetry, order independence")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<GmShadowing> sh = CreateObject<GmShadowing>();
+        sh->SetBaseSeed(42);
+        const int links = 3000;
+        const double sigma = 5.0;
+        const double tau = 120.0;
+
+        double sum = 0, sumSq = 0, cross = 0, sumLater = 0, sumLaterSq = 0, crossFar = 0;
+        for (int l = 0; l < links; ++l)
+        {
+            double a = sh->GetShadowDb(l, l + 5000, Seconds(1000));
+            double b = sh->GetShadowDb(l, l + 5000, Seconds(1000 + tau));
+            double c = sh->GetShadowDb(l, l + 5000, Seconds(1000 + tau + 10 * tau));
+            sum += a;
+            sumSq += a * a;
+            sumLater += b;
+            sumLaterSq += b * b;
+            cross += a * b;
+            crossFar += b * c;
+        }
+        double mean = sum / links;
+        double std = std::sqrt(sumSq / links - mean * mean);
+        NS_TEST_ASSERT_MSG_EQ_TOL(mean, 0.0, 0.3, "mean ~ 0");
+        NS_TEST_ASSERT_MSG_EQ_TOL(std, sigma, 0.3, "std ~ sigma");
+
+        double meanLater = sumLater / links;
+        double stdLater = std::sqrt(sumLaterSq / links - meanLater * meanLater);
+        double corrTau = (cross / links - mean * meanLater) / (std * stdLater);
+        NS_TEST_ASSERT_MSG_EQ_TOL(corrTau, std::exp(-1.0), 0.06, "correlation at one tau");
+        NS_TEST_ASSERT_MSG_EQ_TOL(crossFar / links / (sigma * sigma), 0.0, 0.08, "uncorrelated at 10 tau");
+
+        // Symmetric in the two node ids.
+        NS_TEST_ASSERT_MSG_EQ_TOL(sh->GetShadowDb(3, 9, Seconds(50)), sh->GetShadowDb(9, 3, Seconds(50)), 0.0,
+                                  "symmetric");
+
+        // Order independence: asking at t = 100 and 200 first does not change the value at t = 500.
+        Ptr<GmShadowing> direct = CreateObject<GmShadowing>();
+        direct->SetBaseSeed(7);
+        Ptr<GmShadowing> peeked = CreateObject<GmShadowing>();
+        peeked->SetBaseSeed(7);
+        peeked->GetShadowDb(1, 2, Seconds(100));
+        peeked->GetShadowDb(1, 2, Seconds(200));
+        NS_TEST_ASSERT_MSG_EQ_TOL(direct->GetShadowDb(1, 2, Seconds(500)),
+                                  peeked->GetShadowDb(1, 2, Seconds(500)), 0.0, "peeking is harmless");
+
+        // sigma = 0 switches shadowing off.
+        Ptr<GmShadowing> off = CreateObject<GmShadowing>();
+        off->SetAttribute("ShadowSigmaDb", DoubleValue(0.0));
+        NS_TEST_ASSERT_MSG_EQ_TOL(off->GetShadowDb(1, 2, Seconds(10)), 0.0, 0.0, "sigma 0");
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -678,6 +833,9 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new SharedEvidenceIsNotDoubleCounted, TestCase::QUICK);
         AddTestCase(new HandoverScalesOnlyWhenUnplanned, TestCase::QUICK);
         AddTestCase(new CellPriorAveragesAcceptedPeers, TestCase::QUICK);
+        AddTestCase(new AirtimeIncludesTheExactPreamble, TestCase::QUICK);
+        AddTestCase(new LinkBudgetIsCalibratedAtRange, TestCase::QUICK);
+        AddTestCase(new ShadowingIsGaussMarkovAndAccessOrderFree, TestCase::QUICK);
     }
 };
 

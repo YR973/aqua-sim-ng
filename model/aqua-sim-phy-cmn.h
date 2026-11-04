@@ -76,8 +76,8 @@ public:
   virtual void StatusShift(double);
   virtual bool IsPoweredOn();
 
-  inline Time CalcTxTime(uint32_t pktsize, std::string * modName = NULL);
-  inline double CalcPktSize(double txtime, std::string * modName = NULL);
+  Time CalcTxTime(uint32_t pktsize, std::string * modName = NULL);
+  double CalcPktSize(double txtime, std::string * modName = NULL);
 
   virtual void SignalCacheCallback(Ptr<Packet> p);
   virtual bool Recv(Ptr<Packet> p);
@@ -198,6 +198,11 @@ private:
   // Collision flag in order to monitor whether there have been incoming packets wihtin the TxTime delay of the original packet.
   // If yes, then mark the original packet as collided as well.
   bool m_collision_flag = false;
+
+  // CB-ERGR patches (see cb-ergr/doc/PATCHES.md). All default to false = upstream behaviour.
+  bool m_exactPreamble = false;        // P1: do not truncate Preamble to whole seconds
+  bool m_rxEnergyUsesAirtime = false;  // P2: charge Rx energy for the frame airtime, not the propagation delay
+  bool m_keepEnergyTxPower = false;    // P3: do not overwrite the energy model's TxPower with the acoustic Pt
 
 }; //AquaSimPhyCmn
 

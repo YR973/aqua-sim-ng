@@ -29,6 +29,9 @@
 
 // Aqua Sim Energy Model
 
+#include <algorithm>
+#include "ns3/simulator.h"
+
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("AquaSimEnergyModel");
@@ -102,6 +105,16 @@ AquaSimEnergyModel::DoGetCurrentA(void) const
 {
   NS_LOG_FUNCTION(this);
   return GetCurrentA();
+}
+
+/// CB-ERGR bookkeeping: add the joules actually drawn (capped at what was left) to a per-state
+/// bucket and remember when the battery first ran out. Called before the energy is reduced.
+void
+AquaSimEnergyModel::RecordDraw(double dEng, double& bucket)
+{
+  bucket += std::min(dEng, std::max(0.0, m_energy));
+  if (m_energy <= dEng && m_deathTimeS < 0.0)
+    m_deathTimeS = Simulator::Now().GetSeconds();
 }
 
 void
@@ -206,6 +219,7 @@ AquaSimEnergyModel::DecrIdleEnergy(double t)
   NS_LOG_FUNCTION(this << m_energy);
 
   double dEng = t * m_idleP;
+  RecordDraw(dEng, m_idleEnergyJ);
   if (m_energy <= dEng) {
 	  m_energy = 0.0;
 	  HandleEnergyDepletion();
@@ -225,6 +239,7 @@ AquaSimEnergyModel::DecrRcvEnergy(double t)
   NS_LOG_FUNCTION(this);
 
   double dEng = t * m_rxP;
+  RecordDraw(dEng, m_rxEnergyJ);
   if (m_energy <= dEng) {
 	  m_energy = 0.0;
 	  HandleEnergyDepletion();
@@ -241,6 +256,7 @@ AquaSimEnergyModel::DecrTxEnergy(double t)
   NS_LOG_FUNCTION(this);
 
   double dEng = t * m_txP;
+  RecordDraw(dEng, m_txEnergyJ);
   if (m_energy <= dEng) {
 	  m_energy = 0.0;
 	  HandleEnergyDepletion();
@@ -257,6 +273,7 @@ AquaSimEnergyModel::DecrEnergy(double t, double decrEnergy)
   NS_LOG_FUNCTION(this);
 
   double dEng = t * decrEnergy;
+  RecordDraw(dEng, m_txEnergyJ);
   if (m_energy <= dEng) {
 	  m_energy = 0.0;
 	  HandleEnergyDepletion();

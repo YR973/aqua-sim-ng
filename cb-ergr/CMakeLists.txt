@@ -1,9 +1,13 @@
 # CB-ERGR v5 module (contrib/cb-ergr). Depends on aqua-sim-ng.
-# Sources are added milestone by milestone (see doc/ and the spec, section 15).
+# Files are added step by step (kickoff section 4, steps D0..D7).
 build_lib(
     LIBNAME cb-ergr
     SOURCE_FILES
         model/cb-ergr-config.cc
+        model/acoustic-link-model.cc
+        model/gm-shadowing.cc
+        model/cb-ergr-propagation.cc
+        helper/cb-ergr-helper.cc
     HEADER_FILES
         model/cb-ergr-config.h
         model/cb-ergr-params.h
@@ -12,6 +16,10 @@ build_lib(
         model/receipt-window.h
         model/energy-price.h
         model/cb-learner-model.h
+        model/acoustic-link-model.h
+        model/gm-shadowing.h
+        model/cb-ergr-propagation.h
+        helper/cb-ergr-helper.h
     LIBRARIES_TO_LINK
         ${libaqua-sim-ng}
         ${libmobility}
@@ -29,6 +37,17 @@ build_lib_example(
         ${libcb-ergr}
         ${libaqua-sim-ng}
         ${libapplications}
+        ${libnetwork}
+        ${libmobility}
+        ${libenergy}
+)
+
+build_lib_example(
+    NAME link-per-curve
+    SOURCE_FILES examples/link-per-curve.cc
+    LIBRARIES_TO_LINK
+        ${libcb-ergr}
+        ${libaqua-sim-ng}
         ${libnetwork}
         ${libmobility}
         ${libenergy}
