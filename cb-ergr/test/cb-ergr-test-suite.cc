@@ -6,6 +6,12 @@
  */
 
 #include "ns3/acoustic-link-model.h"
+#include "ns3/aqua-sim-ng-module.h"
+#include "ns3/core-module.h"
+#include "ns3/cb-ergr-helper.h"
+#include "ns3/ergr-emhc-routing.h"
+#include "ns3/mobility-module.h"
+#include "ns3/selector-round-robin.h"
 #include "ns3/aqua-sim-phy-cmn.h"
 #include "ns3/boolean.h"
 #include "ns3/cb-learner-model.h"
@@ -28,6 +34,9 @@
 
 #include <cmath>
 #include <filesystem>
+#include <map>
+#include <set>
+#include <vector>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -1141,6 +1150,259 @@ class SmallScenarioRunsAndIsConsistent : public TestCase
     }
 };
 
+
+// ============================================================ D4 ===========
+
+namespace
+{
+using CsvRow = std::map<std::string, std::string>;
+
+// Read a CSV with a header row into a list of rows keyed by column name.
+std::vector<CsvRow>
+ReadCsv(const std::string& path)
+{
+    std::vector<CsvRow> rows;
+    std::ifstream in(path);
+    std::string line;
+    std::vector<std::string> header;
+    bool first = true;
+    while (std::getline(in, line))
+    {
+        std::vector<std::string> cells;
+        std::stringstream ss(line);
+        for (std::string cell; std::getline(ss, cell, ',');)
+        {
+            cells.push_back(cell);
+        }
+        if (first)
+        {
+            header = cells;
+            first = false;
+            continue;
+        }
+        CsvRow row;
+        for (size_t i = 0; i < header.size() && i < cells.size(); ++i)
+        {
+            row[header[i]] = cells[i];
+        }
+        rows.push_back(row);
+    }
+    return rows;
+}
+
+// Three static nodes in a vertical line: source S (id 2, deep) -> relay F (id 1) -> sink (id 0, shallow).
+// S and F are forced to be heads, so no election is needed. S cannot reach the sink directly (2200 m > R).
+struct LineNetwork
+{
+    Ptr<MetricsCollector> metrics = CreateObject<MetricsCollector>();
+    Ptr<CbErgrPropagation> propagation;
+    Ptr<ErgrEmhcRouting> sink, relay, source;
+
+    LineNetwork(const std::string& outDir, const std::string& selectorAttributes, double extraLoss)
+    {
+        MetricsCollector::Config mc;
+        mc.outDir = outDir;
+        mc.simTimeS = 1.0e9;
+        mc.logDecisions = true;
+        mc.packetTtlS = 100.0;
+        metrics->Configure(mc);
+
+        NodeContainer nodes;
+        nodes.Create(3);
+        Ptr<AquaSimChannel> channel = CbErgrHelper::CreateChannel(propagation, 0.0, 120.0);
+        propagation->SetAttribute("ExtraLossProbability", DoubleValue(extraLoss));
+        propagation->AssignStreams(10);
+        CbErgrHelper::ConnectLinkTrace(propagation, metrics);
+
+        AquaSimHelper asHelper = AquaSimHelper::Default();
+        asHelper.SetChannel(channel);
+        asHelper.SetMac("ns3::AquaSimBroadcastMac");
+        asHelper.SetRouting("ns3::cbergr::ErgrEmhcRouting");
+        CbErgrHelper::ConfigureHelper(asHelper, 0.1, 1e9, 2.0, 0.75, 0.008);
+
+        const Vector positions[3] = {Vector(1100, 1100, 100), Vector(1100, 1100, 1500), Vector(1100, 1100, 2300)};
+        Ptr<ErgrEmhcRouting>* roles[3] = {&sink, &relay, &source};
+        for (int i = 0; i < 3; ++i)
+        {
+            Ptr<MobilityModel> mobility = CreateObject<ConstantPositionMobilityModel>();
+            nodes.Get(i)->AggregateObject(mobility);
+            mobility->SetPosition(positions[i]);
+            Ptr<AquaSimNetDevice> device = CreateObject<AquaSimNetDevice>();
+            asHelper.Create(nodes.Get(i), device);
+            CbErgrHelper::ConfigureDevice(device, 5000.0);
+            device->GetMac()->AssignStreams(20 + i);
+            Ptr<ErgrEmhcRouting> routing = DynamicCast<ErgrEmhcRouting>(device->GetRouting());
+            routing->SetAttribute("AutoElection", BooleanValue(false));
+            routing->SetAttribute("PktRatePerNodeHz", DoubleValue(0.0));
+            routing->AssignStreams(30 + 2 * i);
+            routing->SetNodeRole(i == 0);
+            routing->SetMetrics(metrics);
+            ObjectFactory factory;
+            factory.SetTypeId("ns3::cbergr::SelectorRoundRobin");
+            std::stringstream attrs(selectorAttributes);
+            for (std::string item; std::getline(attrs, item, ';');)
+            {
+                size_t eq = item.find('=');
+                factory.Set(item.substr(0, eq), StringValue(item.substr(eq + 1)));
+            }
+            routing->SetSelector(factory.Create<ForwarderSelector>());
+            metrics->RegisterNode(i, i == 0, device->GetPhy()->EM());
+            *roles[i] = routing;
+        }
+        for (auto* r : roles)
+        {
+            (*r)->Start();
+        }
+        relay->ForceRole(1);
+        source->ForceRole(1);
+    }
+
+    // Inject 'count' packets at the source, 'gapS' apart, starting at 200 s (beacons have converged by then).
+    void Inject(int count, double gapS)
+    {
+        for (int k = 0; k < count; ++k)
+        {
+            Simulator::Schedule(Seconds(200.0 + k * gapS), &ErgrEmhcRouting::InjectPacket, source);
+        }
+    }
+
+    void RunAndFinish(double untilS)
+    {
+        Simulator::Schedule(Seconds(untilS), &MetricsCollector::Finalize, metrics);
+        Simulator::Stop(Seconds(untilS + 0.001));
+        Simulator::Run();
+        Simulator::Destroy();
+    }
+};
+
+CsvRow
+NodeRow(const std::vector<CsvRow>& nodes, int id)
+{
+    for (const CsvRow& r : nodes)
+    {
+        if (std::stoi(r.at("node")) == id)
+        {
+            return r;
+        }
+    }
+    return CsvRow();
+}
+} // namespace
+
+// Spec test 12 (§14): 3-node line with 30% forced loss. Every attempt gets exactly one label, receipt
+// bitmaps produce explicit 0s, retries use new hopSeqs, and the relay never forwards a duplicate.
+class ForcedLossGivesOneLabelPerAttempt : public TestCase
+{
+  public:
+    ForcedLossGivesOneLabelPerAttempt()
+        : TestCase("D4 test12: forced loss, one label per attempt, bitmap explicit zeros, fresh hopSeqs")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-line30";
+        RngSeedManager::SetSeed(5);
+        LineNetwork net(dir, "WithFeedback=true;AckRequest=false", 0.30);
+        net.Inject(80, 12.0);
+        net.RunAndFinish(1500.0); // 150 s expiry + beacon period after the last packet at 1148 s
+
+        // Every attempt got exactly one label (and none is still pending).
+        NS_TEST_ASSERT_MSG_EQ((net.metrics->TotalAttempts() > 80), true, "retries happened");
+        NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalLabels(), net.metrics->TotalAttempts(), "one label per attempt");
+
+        std::vector<CsvRow> decisions = ReadCsv(dir + "/decisions.csv");
+        std::set<std::string> hopSeqs;
+        int bitmapOnes = 0, bitmapZeros = 0, expiry = 0, sourceRows = 0;
+        for (const CsvRow& r : decisions)
+        {
+            if (r.at("node") != "2")
+            {
+                continue;
+            }
+            sourceRows++;
+            hopSeqs.insert(r.at("hop_seq"));
+            bitmapOnes += (r.at("label_source") == "BITMAP" && r.at("label") == "1");
+            bitmapZeros += (r.at("label_source") == "BITMAP" && r.at("label") == "0");
+            expiry += (r.at("label_source") == "EXPIRY");
+        }
+        NS_TEST_ASSERT_MSG_EQ(hopSeqs.size(), static_cast<size_t>(sourceRows), "every attempt has its own hopSeq");
+        NS_TEST_ASSERT_MSG_EQ((bitmapOnes > 0), true, "bitmap labelled some attempts 1");
+        NS_TEST_ASSERT_MSG_EQ((bitmapZeros > 0), true, "bitmap produced explicit 0s");
+        NS_TEST_ASSERT_MSG_EQ((expiry > 0), true, "silent attempts ended by expiry, not by success");
+
+        // No duplicate is forwarded downstream: the relay makes one first attempt per distinct packet it accepted.
+        std::vector<CsvRow> nodes = ReadCsv(dir + "/nodes.csv");
+        CsvRow relayRow = NodeRow(nodes, 1);
+        NS_TEST_ASSERT_MSG_EQ(relayRow.at("first_attempts"), relayRow.at("data_accepted"),
+                              "relay forwards each accepted packet once");
+        NS_TEST_ASSERT_MSG_EQ((std::stoi(relayRow.at("data_duplicates")) > 0), true,
+                              "duplicates reached the relay and were filtered");
+        if (!std::getenv("CBERGR_KEEP"))
+        {
+            std::filesystem::remove_all(dir); // set CBERGR_KEEP=1 to inspect the CSVs
+        }
+    }
+};
+
+// Spec test 13 as changed by kickoff §2.3: when the ACK is lost, the timeout gives label 0 at once; the
+// retry (new hopSeq) is deduplicated at the relay, which ACKs it again.
+class LostAckGivesTimeoutLabelAndDeduplicatedRetry : public TestCase
+{
+  public:
+    LostAckGivesTimeoutLabelAndDeduplicatedRetry()
+        : TestCase("D4 test13: lost ACK -> timeout label 0, retry deduplicated at the relay")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-lostack";
+        RngSeedManager::SetSeed(6);
+        LineNetwork net(dir, "WithFeedback=true;AckRequest=true", 0.0);
+        int acksDropped = 0;
+        net.propagation->SetFrameFilter([&acksDropped](uint32_t tx, uint32_t rx, uint8_t type) {
+            bool firstAck = (type == static_cast<uint8_t>(FrameType::Ack)) && tx == 1 && rx == 2 && acksDropped < 1;
+            acksDropped += firstAck ? 1 : 0;
+            return firstAck; // lose exactly the first ACK from the relay to the source
+        });
+        net.Inject(1, 10.0);
+        net.RunAndFinish(600.0);
+
+        std::vector<CsvRow> decisions = ReadCsv(dir + "/decisions.csv");
+        std::vector<CsvRow> sourceRows;
+        for (const CsvRow& r : decisions)
+        {
+            if (r.at("node") == "2")
+            {
+                sourceRows.push_back(r);
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(sourceRows.size(), 2u, "first attempt and one retry");
+        NS_TEST_ASSERT_MSG_EQ(sourceRows[0].at("label"), "0", "lost ACK: label 0");
+        NS_TEST_ASSERT_MSG_EQ(sourceRows[0].at("label_source"), "ACK_TIMEOUT", "from the ACK timer");
+        NS_TEST_ASSERT_MSG_EQ(sourceRows[0].at("truth_received"), "1", "the relay had received it (ground truth)");
+        NS_TEST_ASSERT_MSG_EQ(sourceRows[1].at("label"), "1", "retry acknowledged");
+        NS_TEST_ASSERT_MSG_EQ(sourceRows[1].at("label_source"), "ACK", "by an ACK");
+        NS_TEST_ASSERT_MSG_EQ((sourceRows[0].at("hop_seq") != sourceRows[1].at("hop_seq")), true, "fresh hopSeq");
+        NS_TEST_ASSERT_MSG_EQ(sourceRows[1].at("ar"), "1", "retries always ask for an ACK");
+        NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalFalseNegatives(), 1u, "one false negative");
+
+        std::vector<CsvRow> nodes = ReadCsv(dir + "/nodes.csv");
+        CsvRow relayRow = NodeRow(nodes, 1);
+        NS_TEST_ASSERT_MSG_EQ(relayRow.at("data_duplicates"), "1", "the retry was a duplicate at the relay");
+        NS_TEST_ASSERT_MSG_EQ(relayRow.at("data_accepted"), "1", "forwarded once");
+        NS_TEST_ASSERT_MSG_EQ(relayRow.at("acks_sent"), "2", "the duplicate is acknowledged too");
+        NS_TEST_ASSERT_MSG_EQ(net.metrics->PacketsDelivered(), 1u, "delivered exactly once");
+        if (!std::getenv("CBERGR_KEEP"))
+        {
+            std::filesystem::remove_all(dir);
+        }
+    }
+};
+
 // ======================================================== the suite =========
 
 class CbErgrTestSuite : public TestSuite
@@ -1172,6 +1434,8 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new RecentSetRemembersWithinCapacityAndTtl, TestCase::QUICK);
         AddTestCase(new SmallScenarioRunsAndIsConsistent, TestCase::QUICK);
         AddTestCase(new SameSeedGivesIdenticalOutput, TestCase::QUICK);
+        AddTestCase(new ForcedLossGivesOneLabelPerAttempt, TestCase::QUICK);
+        AddTestCase(new LostAckGivesTimeoutLabelAndDeduplicatedRetry, TestCase::QUICK);
     }
 };
 

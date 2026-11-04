@@ -15,6 +15,7 @@ build_lib(
         model/localisation-noise.cc
         model/current-drift-mobility.cc
         model/metrics-collector.cc
+        model/feedback-manager.cc
         model/ergr-emhc-routing.cc
         model/scenario-config.cc
         helper/cb-ergr-helper.cc
@@ -38,6 +39,8 @@ build_lib(
         model/localisation-noise.h
         model/current-drift-mobility.h
         model/metrics-collector.h
+        model/feedback-manager.h
+        model/held-packet.h
         model/recent-set.h
         model/ergr-emhc-routing.h
         model/scenario-config.h

@@ -80,6 +80,11 @@ CbErgrPropagation::GetTypeId()
                           DoubleValue(params::phy::kCalibFrameBytes),
                           MakeDoubleAccessor(&CbErgrPropagation::m_calibFrameBytes),
                           MakeDoubleChecker<double>(1.0))
+            .AddAttribute("ExtraLossProbability",
+                          "Test only: every frame is additionally lost with this probability.",
+                          DoubleValue(0.0),
+                          MakeDoubleAccessor(&CbErgrPropagation::m_extraLossProbability),
+                          MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("Shadowing",
                           "The shadowing process (created automatically).",
                           PointerValue(),
@@ -101,8 +106,10 @@ CbErgrPropagation::CbErgrPropagation()
       m_shippingActivity(params::phy::kShippingActivity),
       m_windSpeedMps(params::phy::kWindSpeedMps),
       m_referencePtW(params::phy::kReferenceAcousticPtW),
-      m_calibFrameBytes(params::phy::kCalibFrameBytes)
+      m_calibFrameBytes(params::phy::kCalibFrameBytes),
+      m_extraLossProbability(0.0)
 {
+    m_extraLossDraw = CreateObject<UniformRandomVariable>();
     m_shadowing = CreateObject<GmShadowing>();
     m_lossDraw = CreateObject<UniformRandomVariable>();
 }
@@ -111,6 +118,7 @@ int64_t
 CbErgrPropagation::AssignStreams(int64_t stream)
 {
     m_lossDraw->SetStream(stream);
+    m_extraLossDraw->SetStream(stream + 1000000); // separate stream: default runs never draw from it
     return 1 + m_shadowing->AssignStreams(stream + 1);
 }
 
@@ -186,7 +194,15 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
         const double shadowDb = m_shadowing->GetShadowDb(senderId, receiverId, now);
         const double snrDb = m_link->SnrDb(sourceLevelDb, distanceM, shadowDb);
         const double per = m_link->PerFromSnr(snrDb, frameBytes);
-        const bool decodable = m_lossDraw->GetValue() >= per;
+        bool decodable = m_lossDraw->GetValue() >= per;
+        if (decodable && m_extraLossProbability > 0.0 && m_extraLossDraw->GetValue() < m_extraLossProbability)
+        {
+            decodable = false; // forced loss (tests)
+        }
+        if (decodable && m_filter && m_filter(senderId, receiverId, frameType))
+        {
+            decodable = false; // deterministic loss chosen by a test
+        }
         m_linkEval(senderId, receiverId, distanceM, snrDb, per, decodable, frameBytes, frameType);
 
         PktRecvUnit unit;

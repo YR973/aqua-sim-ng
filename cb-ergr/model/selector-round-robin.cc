@@ -6,6 +6,8 @@
 
 #include "cb-ergr-params.h"
 
+#include "ns3/boolean.h"
+
 namespace ns3
 {
 namespace cbergr
@@ -18,7 +20,17 @@ SelectorRoundRobin::GetTypeId()
 {
     static TypeId tid = TypeId("ns3::cbergr::SelectorRoundRobin")
                             .SetParent<ForwarderSelector>()
-                            .AddConstructor<SelectorRoundRobin>();
+                            .AddConstructor<SelectorRoundRobin>()
+                            .AddAttribute("WithFeedback",
+                                          "Send round-robin choices with ACK requests and retries (not the published protocol).",
+                                          BooleanValue(params::selector::kRoundRobinWithFeedback),
+                                          MakeBooleanAccessor(&SelectorRoundRobin::m_withFeedback),
+                                          MakeBooleanChecker())
+                            .AddAttribute("AckRequest",
+                                          "With feedback: request an ACK on first attempts (false: labels come from receipt bitmaps).",
+                                          BooleanValue(true),
+                                          MakeBooleanAccessor(&SelectorRoundRobin::m_requestAck),
+                                          MakeBooleanChecker());
     return tid;
 }
 
@@ -44,7 +56,7 @@ SelectorRoundRobin::Select(const PacketCtx& pkt, const std::vector<Candidate>& e
 
     d.fwdId = chosen->id;
     d.powerLevel = params::phy::kNumPowerLevels - 1; // full power
-    d.ackRequest = false;                            // no hop ACKs in the published protocol
+    d.ackRequest = m_withFeedback && m_requestAck;   // no hop ACKs in the published protocol
     d.valid = true;
     return d;
 }

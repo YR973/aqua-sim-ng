@@ -18,6 +18,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace ns3
 {
@@ -28,6 +29,7 @@ void
 RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
 {
     c.Add("Selector", &s.selector, "Forwarding method: RoundRobin, CbV5, ...");
+    c.Add("SelectorAttributes", &s.selectorAttributes, "Attributes of the selector: Name=value;Name=value");
     c.Add("Flags", &s.flags, "Free text describing the variant (goes to summary.csv)");
     c.Add("OutDir", &s.outDir, "Directory for the result files");
     c.Add("Seed", &s.seed, "Random seed");
@@ -196,6 +198,15 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
 
         ObjectFactory selectorFactory;
         selectorFactory.SetTypeId("ns3::cbergr::Selector" + s.selector);
+        std::stringstream attrs(s.selectorAttributes);
+        for (std::string item; std::getline(attrs, item, ';');)
+        {
+            size_t eq = item.find('=');
+            if (eq != std::string::npos)
+            {
+                selectorFactory.Set(item.substr(0, eq), StringValue(item.substr(eq + 1)));
+            }
+        }
         routing->SetSelector(selectorFactory.Create<ForwarderSelector>());
 
         metrics->RegisterNode(node->GetId(), isSink, device->GetPhy()->EM());

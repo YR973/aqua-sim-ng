@@ -121,6 +121,10 @@ constexpr double kNackWindowS = 8.0;     // [CONFIRM] A6 how long a forwarded pa
 constexpr int kVoidRetryLimit = 3;       // [CONFIRM] A6 NACK-triggered re-selections before the packet is dropped
 constexpr double kDataStartS = 300.0;    // [DESIGN] D§3 P6 data starts after start-up
 constexpr double kBeaconJitterFraction = 0.0; // beacons are strictly periodic after a random first phase
+constexpr double kPhyRxDelayAirtimes = 1.0; // [MEASURED] Aqua-Sim hands a frame to the MAC 2 airtimes after it starts arriving (collision check + signal cache); the ACK timeout allows for the extra one, CONFIRM E17
+constexpr double kAckSoundSpeedMps = 1500.0; // [SPEC] S§9.1 propagation speed used in the ACK timeout
+constexpr bool kRetriesAlwaysAck = true;  // [SPEC] S§9.12 retries always request an ACK
+constexpr bool kAutoElection = true;     // false only in tests that force the roles by hand
 constexpr int kDuplicateCapacity = 1024; // [SPEC] S§7 duplicate filter size
 constexpr double kDuplicateTtlS = 600.0; // [SPEC] S§7 duplicate filter lifetime
 } // namespace timers
@@ -161,6 +165,11 @@ constexpr bool kEnableSharing = true;    // [SPEC] S§10
 constexpr bool kMarginFromRssi = true;   // [DESIGN] K§2.3
 constexpr bool kOnwardFeature = false;   // [DESIGN] K§2.3 (D = 10 if true)
 } // namespace learner
+
+namespace selector
+{
+constexpr bool kRoundRobinWithFeedback = false; // [SPEC] S§9.1: published ERGR-EMHC has no hop ACKs
+} // namespace selector
 
 // --------------------------------------------------------------- price ----
 namespace price

@@ -20,7 +20,9 @@
 
 #include <array>
 #include <fstream>
+#include <functional>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -114,6 +116,40 @@ class MetricsCollector : public Object
     void OnDrop(uint32_t node, E2EKey key, DropReason reason);
     void OnDuplicate(uint32_t node);
 
+    // --- Feedback hooks (D4) ---
+    /// A DATA frame was sent. Registers the attempt for ground truth (did the forwarder get it?).
+    void OnAttemptSent(uint32_t sender,
+                       uint16_t fwd,
+                       uint16_t hopSeq,
+                       uint8_t attempt,
+                       bool ackRequested,
+                       bool learn,
+                       bool tracked,
+                       double predictedDistM,
+                       const Decision& decision);
+    /// A feedback manager reports how many attempts it still holds at the end (consistency check).
+    void RegisterPendingProbe(std::function<size_t()> probe) { m_pendingProbes.push_back(probe); }
+    /// An attempt was removed without a label (its forwarder was declared dead).
+    void OnAttemptDiscarded(uint32_t node);
+    /// GROUND TRUTH, called by the forwarder when a DATA frame addressed to it arrives. Logging only.
+    void OnHopReceived(uint32_t sender, uint32_t fwd, uint16_t hopSeq);
+    /// Ground truth lookup for the CSVs (never given to a learner).
+    bool HopWasReceived(uint32_t sender, uint32_t fwd, uint16_t hopSeq) const;
+    /// An attempt got its label.
+    void OnLabel(uint32_t node,
+                 uint16_t fwd,
+                 uint16_t hopSeq,
+                 int label,
+                 LabelSource source,
+                 double delayS,
+                 uint8_t attempt,
+                 bool ackRequested,
+                 bool learn,
+                 const Decision& decision);
+    void OnDuplicateLabel(uint32_t node);
+    void OnAckSent(uint32_t node);
+    void OnAckReceived(uint32_t node);
+
     // --- Protocol events ---
     void OnEvent(uint32_t node, const std::string& kind, const std::string& details);
     void OnHeadChange(uint32_t node, bool isHead, uint16_t cellId);
@@ -127,6 +163,9 @@ class MetricsCollector : public Object
 
     // --- Read access (tests, calibration report) ---
     uint64_t TotalFramesTx(FrameType t) const { return m_totalFramesTx[static_cast<int>(t)]; }
+    uint64_t TotalAttempts() const { return m_totalAttempts; }
+    uint64_t TotalLabels() const { return m_totalLabels; }
+    uint64_t TotalFalseNegatives() const { return m_falseNegatives; }
     uint64_t TotalBytesTx(FrameType t) const { return m_totalBytesTx[static_cast<int>(t)]; }
     uint32_t PacketsCreated() const { return m_createdCounted; }
     uint32_t PacketsDelivered() const { return m_deliveredCounted; }
@@ -146,6 +185,12 @@ class MetricsCollector : public Object
         uint64_t phyRxErrors = 0;   ///< raw PHY error events; collisions = this minus known PER losses
         uint64_t dataOriginated = 0, dataForwarded = 0, dataDuplicates = 0;
         std::array<uint64_t, static_cast<int>(DropReason::kCount)> drops{};
+        uint64_t attempts = 0, firstAttempts = 0, retransmissions = 0;
+        uint64_t hopSuccessFirst = 0, hopSuccessRetry = 0;   ///< ground truth, by attempt number
+        uint64_t arRequested = 0, acksSent = 0, acksReceived = 0, ackTimeouts = 0, duplicateLabels = 0;
+        std::array<uint64_t, 5> labelsBySource{};            ///< Ack, AckTimeout, Bitmap, Expiry, Void
+        std::array<uint64_t, 2> labelsByValue{};
+        double labelDelaySumS = 0.0;
         double headTimeS = 0.0;
         double headSinceS = -1.0;   ///< start of the current tenure, -1 when not head
         uint32_t timesElected = 0;
@@ -169,7 +214,35 @@ class MetricsCollector : public Object
         uint32_t dropNode = 0;
     };
 
+    /// Ground truth for one outstanding attempt, keyed by (sender, forwarder, hopSeq).
+    struct Outstanding
+    {
+        uint8_t attempt = 1;
+        bool received = false;
+        double sentS = 0.0;
+    };
+    static uint64_t HopId(uint32_t sender, uint32_t fwd, uint16_t hopSeq)
+    {
+        return (static_cast<uint64_t>(sender) << 40) | (static_cast<uint64_t>(fwd) << 16) | hopSeq;
+    }
+    struct LinkStats
+    {
+        uint64_t attempts = 0, retx = 0, truthSuccess = 0;
+        std::array<uint64_t, 5> labelsBySource{};   ///< label 1 / 0 split is in the two arrays below
+        uint64_t labelOnes = 0, labelZeros = 0;
+        double distSumM = 0.0, predSum = 0.0;
+        double firstS = -1.0, lastS = 0.0;
+    };
+    struct SnrStats
+    {
+        double sum = 0.0;
+        uint64_t n = 0;
+    };
+
     bool Counting() const;
+    void WriteLinks();
+    void WriteDecisionLine(uint32_t node, uint16_t fwd, uint16_t hopSeq, int label, LabelSource src, double delayS,
+                           uint8_t attempt, bool ar, bool learn, bool truth, const Decision& d);
     NodeStats& Node(uint32_t id) { return m_nodes[id]; }
     uint64_t CollisionsOf(const NodeStats& n) const;
     void WriteSummary();
@@ -186,6 +259,17 @@ class MetricsCollector : public Object
     std::ofstream m_framesFile;                 ///< frames.csv, streamed because it can be huge
     std::vector<double> m_tenuresS;             ///< completed head tenures (s)
 
+    std::vector<std::function<size_t()>> m_pendingProbes;
+    uint64_t m_trackedAttempts = 0, m_discardedAttempts = 0, m_labelsAllTime = 0;
+    std::unordered_map<uint64_t, Outstanding> m_outstanding;
+    std::map<std::pair<uint32_t, uint32_t>, LinkStats> m_links;
+    std::map<std::pair<uint32_t, uint32_t>, SnrStats> m_linkSnr;   ///< DATA frames only
+    std::ofstream m_decisionsFile;
+    uint64_t m_totalAttempts = 0, m_totalLabels = 0, m_falseNegatives = 0, m_labelZeros = 0;
+    std::array<uint64_t, 5> m_labelsBySource{};
+    double m_labelDelaySumS = 0.0;
+    std::vector<double> m_labelDelays;
+    uint64_t m_arAttempts = 0, m_duplicateLabelsTotal = 0;
     std::array<uint64_t, kNumFrameTypes> m_totalFramesTx{};
     std::array<uint64_t, kNumFrameTypes> m_totalBytesTx{};
     uint64_t m_electionsAfterWarmup = 0;

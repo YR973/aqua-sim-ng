@@ -2,6 +2,21 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 08:00 — D4 feedback: ACKs, receipt bitmaps, retries, ground truth, links/decisions CSVs
+- What: new `feedback-manager.{h,cc}`, `held-packet.h`; routing now sends DATA with random-start hop sequence numbers, ACK timers, ACK frames, receipts in beacons and retries; `MetricsCollector` gained attempt/label/ground-truth hooks, `links.csv`, `decisions.csv` (with `hop_seq`), label statistics in `summary.csv`, new columns in `nodes.csv`, and the attempt consistency check (tracked = labels + pending + discarded). RoundRobin got `WithFeedback` and `AckRequest` attributes; scenario got `SelectorAttributes`. Test hooks: `ForceRole`, `InjectPacket`, `AutoElection`, `CbErgrPropagation::SetFrameFilter` and `ExtraLossProbability`. Tests 12 and 13 added (27 cases pass).
+- Why: kickoff §4 D4 and spec §9. Gives every learner the same delayed, censored 0/1 labels, with no label ever coming from silence.
+- Effect on results: RoundRobin without feedback is unchanged except for random-number order and patch P5 (see below). New: RR with feedback ("RR+FB").
+- Spec/design deviation:
+  1. **ACK timeout is longer than the spec formula** (CONFIRM E17). Aqua-Sim hands a frame to the MAC two airtimes after it starts arriving (collision check one airtime, signal cache another). With the spec formula every ACK arrived after its timer fired (all labels were timeouts, 32% false negatives). The timeout is now (1 + PhyRxDelayAirtimes) x (airtime(DATA) + airtime(ACK)) + 2d/1500 + TProc + TGuard, with the extra factor measured as 1. Alternative not taken: patching the PHY to deliver after one airtime (it would change the collision window of all frames).
+  2. **Test 13 follows K§2.3, not spec §14**: with "ACK timeout = label 0 at once", the lost-ACK attempt is labelled 0 (source ACK_TIMEOUT, ground truth received = false negative); the retry is deduplicated at the relay, which ACKs it again. The spec's "labelled 1 later from the bitmap" cannot happen because the first label wins.
+  3. **Member hand-offs use ACK + retry in feedback mode** but their labels are logged, not learned (K§2.1: only heads learn). Without this, every method loses 30-50% of packets on the first (member to head) hop.
+  4. **A void NACK is a failure label** only if the attempt has no label yet; if the ACK already arrived the label stays 1 (first label wins) and the NACK path re-routes the packet.
+  5. **`duplicate_labels`** counts ACKs that arrive for an attempt that already has a label (late ACKs), not repeated bitmap reads.
+  6. **RR+FB is an extra baseline** (not in K§2.4): the same round-robin choice with ACK requests and retries. It separates the gain of retransmission from the gain of learning.
+  7. Ground truth is kept inside `MetricsCollector` (logging only); `ForwarderSelector` has no access to it.
+- Bugs found on the way: ACK timeout too short (item 1, caught by the label statistics); decisions column order shifted after adding `hop_seq` (tests read by column name so they did not break).
+- Baseline shift: RR without feedback now gives PDR 0.273 on training seeds 101-103 (was 0.294 before D4). Cause: patch P5 (half-duplex) was switched on after the earlier runs, and the random hop-sequence start changes the random-number order. Within seed noise; not tuned.
+
 ## 2026-11-05 03:00 — D3 ERGR-EMHC-g + RoundRobin pipeline (routing, election, metrics, scenario)
 - What: new `grid-geometry`, `ergr-headers`, `neighbour-table`, `recent-set`, `forwarder-selector`, `selector-round-robin`, `localisation-noise`, `current-drift-mobility`, `metrics-collector`, `ergr-emhc-routing`, `scenario-config` (model/); `scenario-runner` (helper/); `examples/cb-ergr-scenario.cc`; `configs/{base,p0-published,smoke,e0-10000}.txt`; patch P5 (half-duplex). 9 new test cases (headers, grid, table, duplicate filter, small run, determinism).
 - Why: kickoff §4 D3. The base scenario now runs end to end and writes summary/nodes/packets/events CSVs (frames.csv with `--LogFrames=true`) with reason codes and the consistency checks of K§2.6.

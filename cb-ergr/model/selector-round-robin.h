@@ -22,9 +22,13 @@ class SelectorRoundRobin : public ForwarderSelector
     Decision Select(const PacketCtx& pkt, const std::vector<Candidate>& eligible, Time now) override;
 
     // --- Learning ---
-    bool UsesFeedback() const override { return false; }
+    /// False for the published protocol (no hop ACKs). With WithFeedback the same round-robin choice is
+    /// sent with an ACK request on every attempt and retried (isolates the value of retransmission from learning).
+    bool UsesFeedback() const override { return m_withFeedback; }
 
   private:
+    bool m_withFeedback = false;
+    bool m_requestAck = true;   ///< with feedback: ask for an ACK on first attempts (false = bitmap labels only)
     int32_t m_lastId = -1; ///< id chosen last time; the next choice is the next larger id (wrapping)
 };
 

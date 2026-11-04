@@ -23,6 +23,7 @@
 #include "ns3/random-variable-stream.h"
 #include "ns3/traced-callback.h"
 
+#include <functional>
 #include <memory>
 
 namespace ns3
@@ -52,6 +53,9 @@ class CbErgrPropagation : public AquaSimPropagation
     /// Uses 2 ns-3 random streams; returns how many.
     int64_t AssignStreams(int64_t stream);
 
+    /// Test hook: return true to lose a frame (sender node, receiver node, frame type).
+    void SetFrameFilter(std::function<bool(uint32_t, uint32_t, uint8_t)> filter) { m_filter = filter; }
+
   private:
     void EnsureLinkModel();
 
@@ -65,6 +69,9 @@ class CbErgrPropagation : public AquaSimPropagation
     double m_windSpeedMps;
     double m_referencePtW;
     double m_calibFrameBytes;
+    double m_extraLossProbability;
+    std::function<bool(uint32_t, uint32_t, uint8_t)> m_filter;
+    Ptr<UniformRandomVariable> m_extraLossDraw;
 
     std::unique_ptr<AcousticLinkModel> m_link;
     Ptr<GmShadowing> m_shadowing;

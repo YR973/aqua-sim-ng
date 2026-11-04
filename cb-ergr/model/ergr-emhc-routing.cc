@@ -8,6 +8,8 @@
 
 #include "cb-ergr-params.h"
 
+#include "ns3/aqua-sim-phy-cmn.h"
+
 #include "ns3/aqua-sim-address.h"
 #include "ns3/aqua-sim-header.h"
 #include "ns3/aqua-sim-net-device.h"
@@ -103,6 +105,30 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("VoidRetryLimit", "NACK-triggered re-selections before dropping.",
                           UintegerValue(params::timers::kVoidRetryLimit),
                           MakeUintegerAccessor(&ErgrEmhcRouting::m_voidRetryLimit), MakeUintegerChecker<int>(0))
+            .AddAttribute("MaxTx", "Attempts per packet and node before dropping (feedback mode).",
+                          UintegerValue(params::timers::kMaxTx),
+                          MakeUintegerAccessor(&ErgrEmhcRouting::m_maxTx), MakeUintegerChecker<int>(1))
+            .AddAttribute("AckProcS", "ACK timeout term: forwarder processing time (s).",
+                          DoubleValue(params::timers::kAckProcS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_ackProcS), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("AckGuardS", "ACK timeout term: guard time (s).",
+                          DoubleValue(params::timers::kAckGuardS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_ackGuardS), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("PhyRxDelayAirtimes", "Extra airtimes the PHY holds a received frame before the MAC sees it (measured: 1).",
+                          DoubleValue(params::timers::kPhyRxDelayAirtimes),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_phyRxDelayAirtimes), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("RetriesAlwaysAck", "Retries always request an ACK (spec §9.12).",
+                          BooleanValue(params::timers::kRetriesAlwaysAck),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_retriesAlwaysAck), MakeBooleanChecker())
+            .AddAttribute("ExpiryBeacons", "Label expiry (MExpiry) in beacon periods.",
+                          DoubleValue(params::timers::kExpiryBeacons),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_expiryBeacons), MakeDoubleChecker<double>(1.0))
+            .AddAttribute("ReceiptKeepBeacons", "Senders stay in outgoing receipt lists this many beacon periods.",
+                          DoubleValue(params::timers::kReceiptKeepBeacons),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_receiptKeepBeacons), MakeDoubleChecker<double>(1.0))
+            .AddAttribute("AutoElection", "Run the head election (false only in tests that call ForceRole).",
+                          BooleanValue(params::timers::kAutoElection),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_autoElection), MakeBooleanChecker())
             .AddAttribute("DataStartS", "Traffic starts at this time (s).", DoubleValue(params::timers::kDataStartS),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_dataStartS), MakeDoubleChecker<double>(0.0))
             .AddAttribute("PktRatePerNodeHz", "Poisson data rate per node (packets/s).",
@@ -135,6 +161,14 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_hysteresisM(params::election::kMembershipHysteresisM),
       m_nackWindowS(params::timers::kNackWindowS),
       m_voidRetryLimit(params::timers::kVoidRetryLimit),
+      m_maxTx(params::timers::kMaxTx),
+      m_ackProcS(params::timers::kAckProcS),
+      m_ackGuardS(params::timers::kAckGuardS),
+      m_phyRxDelayAirtimes(params::timers::kPhyRxDelayAirtimes),
+      m_retriesAlwaysAck(params::timers::kRetriesAlwaysAck),
+      m_autoElection(params::timers::kAutoElection),
+      m_expiryBeacons(params::timers::kExpiryBeacons),
+      m_receiptKeepBeacons(params::timers::kReceiptKeepBeacons),
       m_dataStartS(params::timers::kDataStartS),
       m_pktRateHz(params::scenario::kPktRatePerNodeHz),
       m_payloadBytes(params::scenario::kPayloadBytes),
@@ -197,6 +231,20 @@ ErgrEmhcRouting::ResidualFraction()
     return std::max(0.0, std::min(1.0, energy->GetEnergy() / energy->GetInitialEnergy()));
 }
 
+void
+ErgrEmhcRouting::ForceRole(uint8_t rank)
+{
+    if (rank == 0)
+    {
+        m_isHead = false;
+        m_rank = 0;
+        return;
+    }
+    m_isHead = true;
+    m_rank = rank;
+    m_metrics->OnHeadChange(m_id, true, m_cell);
+}
+
 // =========================================================== start-up ======
 
 void
@@ -207,6 +255,26 @@ ErgrEmhcRouting::Start()
     m_started = true;
     m_seen = std::make_unique<RecentSet>(m_duplicateCapacity, Seconds(m_duplicateTtlS));
     m_hmin = m_isSink ? 0 : kUnknownHmin;
+    if (m_selector->UsesFeedback() && !m_isSink)
+    {
+        FeedbackManager::Config fc;
+        fc.myId = m_id;
+        fc.beaconPeriodS = m_beaconPeriodS;
+        fc.maxTx = m_maxTx;
+        fc.expiryS = m_expiryBeacons * m_beaconPeriodS;
+        fc.receiptKeepS = m_receiptKeepBeacons * m_beaconPeriodS;
+        FeedbackManager::Hooks hooks;
+        hooks.retry = [this](const HeldPacket& held) {
+            if (!IsAlive())
+            {
+                m_metrics->OnDrop(m_id, held.key, DropReason::NodeDiedHolding);
+                return;
+            }
+            RoutePacket(held);
+        };
+        hooks.drop = [this](const HeldPacket& held, DropReason reason) { Drop(held, reason); };
+        m_feedback = std::make_unique<FeedbackManager>(fc, m_selector, m_metrics, hooks);
+    }
     UpdateSelfEstimate();
     UpdateOwnCell();
 
@@ -215,8 +283,12 @@ ErgrEmhcRouting::Start()
 
     if (!m_isSink)
     {
+        if (m_autoElection)
+        {
+            Simulator::Schedule(Seconds(m_firstElectionS + m_cell * m_electionOffsetPerCellS),
+                                &ErgrEmhcRouting::OnElectionEpoch, this);
+        }
         double electionAt = m_firstElectionS + m_cell * m_electionOffsetPerCellS;
-        Simulator::Schedule(Seconds(electionAt), &ErgrEmhcRouting::OnElectionEpoch, this);
         if (m_pktRateHz > 0.0)
         {
             m_interArrival->SetAttribute("Mean", DoubleValue(1.0 / m_pktRateHz));
@@ -359,6 +431,10 @@ ErgrEmhcRouting::SendBeacon()
     hdr.battery = static_cast<uint8_t>(std::round(ResidualFraction() * 255.0));
     hdr.queueLen = static_cast<uint8_t>(std::min<size_t>(255, m_sent.size()));
     hdr.nextBeaconDs = static_cast<uint16_t>(std::round(m_beaconPeriodS * 10.0));
+    if (m_feedback)
+    {
+        hdr.receipts = m_feedback->BuildReceipts(Simulator::Now());
+    }
 
     Ptr<Packet> packet = Create<Packet>(0);
     packet->AddHeader(hdr);
@@ -414,6 +490,10 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
         wasHeadInMyCell = old->isHead && old->cellId == m_cell;
     }
     TableUpdateResult result = m_table.Update(entry);
+    if (m_feedback)
+    {
+        m_feedback->OnBeaconReceipts(hdr); // label pending attempts to this node from its receipt list
+    }
 
     if (result.headStatusChanged && entry.cellId != m_cell && !entry.isSink)
     {
@@ -718,6 +798,7 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
 {
     if (!IsAlive())
     {
+        m_metrics->OnDrop(m_id, pkt.key, DropReason::NodeDiedHolding);
         return;
     }
     RecomputeHmin();
@@ -736,7 +817,7 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
     PacketCtx ctx;
     ctx.key = pkt.key;
     ctx.hpkt = pkt.hpkt;
-    ctx.attempt = pkt.sentOnce ? 2 : 1;
+    ctx.attempt = pkt.attempt + 1;
     ctx.myId = m_id;
     ctx.myHmin = m_hmin;
     ctx.myPos = EstimatedPosition();
@@ -749,7 +830,8 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
         HandleVoid(pkt);
         return;
     }
-    SendData(pkt, decision.fwdId, decision.powerLevel, decision.ackRequest);
+    decision.numCandidates = static_cast<uint8_t>(eligible.size());
+    SendData(pkt, decision.fwdId, decision.powerLevel, decision.ackRequest, &decision);
     m_selector->OnSent(decision, now);
 }
 
@@ -774,30 +856,116 @@ ErgrEmhcRouting::HandOffToHead(HeldPacket pkt)
     }
     const NeighbourEntry* head = heads[m_headRoundRobin++ % heads.size()];
     pkt.hpkt = head->hmin; // the head restarts the hop budget from its own Hmin
-    SendData(pkt, head->id, params::phy::kNumPowerLevels - 1, false);
+    SendData(pkt, head->id, params::phy::kNumPowerLevels - 1, m_feedback != nullptr, nullptr);
+}
+
+// Random start (spec §7): the first hopSeq towards a forwarder is random, then it counts up.
+uint16_t
+ErgrEmhcRouting::NextHopSeq(uint16_t fwdId)
+{
+    auto it = m_hopSeq.find(fwdId);
+    if (it == m_hopSeq.end())
+    {
+        it = m_hopSeq.emplace(fwdId, static_cast<uint16_t>(m_uniform->GetInteger(0, 65535))).first;
+    }
+    return ++it->second;
+}
+
+// Spec §9.1 step 7: airtime(DATA) + 2 * d / 1500 + airtime(ACK) + TProc + TGuard, extended by the
+// extra airtime(s) the Aqua-Sim PHY holds each frame before delivering it (CONFIRM E17).
+double
+ErgrEmhcRouting::AckTimeoutS(uint16_t fwdId, double dataBytes)
+{
+    Ptr<AquaSimPhyCmn> phy = DynamicCast<AquaSimPhyCmn>(GetNetDevice()->GetPhy());
+    double dataAirS = phy->CalcTxTime(static_cast<uint32_t>(dataBytes)).GetSeconds();
+    double ackAirS = phy->CalcTxTime(7).GetSeconds(); // ACK header is 7 B
+    double distM = m_txRangeM;                         // worst case if the neighbour is unknown
+    if (const NeighbourEntry* nb = m_table.Find(fwdId))
+    {
+        distM = Distance(nb->PredictedPos(Simulator::Now()), EstimatedPosition());
+    }
+    double airS = (1.0 + m_phyRxDelayAirtimes) * (dataAirS + ackAirS);
+    return airS + 2.0 * distM / params::timers::kAckSoundSpeedMps + m_ackProcS + m_ackGuardS;
 }
 
 void
-ErgrEmhcRouting::SendData(HeldPacket pkt, uint16_t forwarderId, uint8_t powerLevel, bool ackRequest)
+ErgrEmhcRouting::SendData(HeldPacket pkt,
+                          uint16_t forwarderId,
+                          uint8_t powerLevel,
+                          bool ackRequest,
+                          const Decision* decision)
 {
+    pkt.attempt++;
+    const bool isRetry = pkt.attempt > 1;
+    const bool tracked = (m_feedback != nullptr);
+    // Spec §9.12: retries always request an ACK (only meaningful when feedback is on).
+    const bool ar = tracked && (ackRequest || (isRetry && m_retriesAlwaysAck));
+
     ErgrDataHeader hdr;
     hdr.senderId = m_id;
     hdr.forwarderId = forwarderId;
     hdr.sourceId = pkt.key.source;
     hdr.sourceSeq = pkt.key.seq;
     hdr.hpkt = pkt.hpkt;
-    hdr.hopSeq = ++m_hopSeq[forwarderId];
-    hdr.SetFlags(ackRequest, false, powerLevel);
+    hdr.hopSeq = NextHopSeq(forwarderId);
+    hdr.SetFlags(ar, false, powerLevel);
     hdr.genTimeMs = pkt.genTimeMs;
 
     Ptr<Packet> packet = Create<Packet>(m_payloadBytes);
     packet->AddHeader(hdr);
-    m_metrics->OnDataSent(pkt.key, m_id, pkt.sentOnce);
+    const double dataBytes = packet->GetSize();
+
+    double predictedDistM = 0.0;
+    if (const NeighbourEntry* nb = m_table.Find(forwarderId))
+    {
+        predictedDistM = Distance(nb->PredictedPos(Simulator::Now()), EstimatedPosition());
+    }
+    Decision logged;
+    if (decision)
+    {
+        logged = *decision;
+    }
+    else
+    {
+        logged.fwdId = forwarderId;
+        logged.powerLevel = powerLevel;
+        logged.valid = true;
+    }
+    logged.ackRequest = ar;
+
+    m_metrics->OnDataSent(pkt.key, m_id, isRetry);
+    m_metrics->OnAttemptSent(m_id, forwarderId, hdr.hopSeq, pkt.attempt, ar, decision != nullptr, tracked,
+                             predictedDistM, logged);
     TransmitFrame(packet, FrameType::Data, forwarderId, powerLevel);
 
-    pkt.sentOnce = true;
     pkt.lastForwarder = forwarderId;
+    pkt.lastHopSeq = hdr.hopSeq;
+    if (tracked)
+    {
+        PendingAttempt pa;
+        pa.decision = logged;
+        pa.hop = HopKey{forwarderId, hdr.hopSeq};
+        pa.pkt = pkt.key;
+        pa.ackRequested = ar;
+        pa.attempt = pkt.attempt;
+        pa.learn = (decision != nullptr);
+        pa.predictedDistM = predictedDistM;
+        m_feedback->Track(pa, pkt, ar ? AckTimeoutS(forwarderId, dataBytes) : 0.0);
+    }
     Remember(pkt);
+}
+
+void
+ErgrEmhcRouting::SendAck(uint16_t toSender, uint16_t hopSeq)
+{
+    ErgrAckHeader ack;
+    ack.ackerId = m_id;
+    ack.senderId = toSender;
+    ack.hopSeq = hopSeq;
+    Ptr<Packet> packet = Create<Packet>(0);
+    packet->AddHeader(ack);
+    m_metrics->OnAckSent(m_id);
+    TransmitFrame(packet, FrameType::Ack, toSender, params::phy::kNumPowerLevels - 1); // ACKs use full power
 }
 
 void
@@ -854,6 +1022,15 @@ void
 ErgrEmhcRouting::OnData(const ErgrDataHeader& hdr)
 {
     E2EKey key{hdr.sourceId, hdr.sourceSeq};
+    m_metrics->OnHopReceived(hdr.senderId, m_id, hdr.hopSeq); // ground truth, logging only
+    if (m_feedback)
+    {
+        m_feedback->MarkReceived(hdr.senderId, hdr.hopSeq, Simulator::Now()); // spec §9.2 step 1
+    }
+    if (hdr.GetAckRequest())
+    {
+        SendAck(hdr.senderId, hdr.hopSeq); // spec §9.2 step 2: ACK even for duplicates (the first ACK may have been lost)
+    }
     if (!m_seen->Insert(key, Simulator::Now()))
     {
         m_metrics->OnDuplicate(m_id);
@@ -888,6 +1065,10 @@ ErgrEmhcRouting::OnNack(const ErgrNackHeader& hdr)
     }
     HeldPacket pkt = it->second;
     Forget(key);
+    if (m_feedback)
+    {
+        m_feedback->OnVoid(hdr.nackerId, pkt.lastHopSeq); // a void counts as a failure label if none arrived yet
+    }
     pkt.excluded.insert(hdr.nackerId);
     pkt.voidRetries++;
     if (pkt.voidRetries > m_voidRetryLimit)
@@ -957,6 +1138,17 @@ ErgrEmhcRouting::Recv(Ptr<Packet> packet, const Address& dest, uint16_t protocol
         packet->RemoveHeader(hdr);
         m_metrics->OnFrameRx(m_id, FrameType::Election, bytes, true, hdr.nodeId);
         OnElectionFrame(hdr);
+        break;
+    }
+    case FrameType::Ack: {
+        ErgrAckHeader hdr;
+        packet->RemoveHeader(hdr);
+        bool mine = hdr.senderId == m_id;
+        m_metrics->OnFrameRx(m_id, FrameType::Ack, bytes, mine, hdr.ackerId);
+        if (mine && m_feedback)
+        {
+            m_feedback->OnAck(hdr.ackerId, hdr.hopSeq);
+        }
         break;
     }
     case FrameType::Nack: {

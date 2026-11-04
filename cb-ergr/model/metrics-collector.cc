@@ -110,6 +110,16 @@ MetricsCollector::Configure(const Config& cfg)
 {
     m_cfg = cfg;
     std::filesystem::create_directories(m_cfg.outDir);
+    if (m_cfg.logDecisions)
+    {
+        m_decisionsFile.open(m_cfg.outDir + "/decisions.csv");
+        m_decisionsFile << "time_s,node,fwd,hop_seq,power_level,attempt,ar,learn,n_candidates,chosen_rank";
+        for (int i = 1; i <= kMaxFeatureDim; ++i)
+        {
+            m_decisionsFile << ",x" << i;
+        }
+        m_decisionsFile << ",p_mean,width,score,lambda_e,label,label_source,label_delay_s,truth_received\n";
+    }
     if (m_cfg.logFrames)
     {
         m_framesFile.open(m_cfg.outDir + "/frames.csv");
@@ -212,6 +222,12 @@ MetricsCollector::OnLinkEval(uint32_t txNode,
                      << ',' << rxNode << ',' << bytes << ",," << distM << ',' << snrDb << ','
                      << RxFailReasonName(reason) << '\n';
     }
+    if (type == FrameType::Data)
+    {
+        SnrStats& snr = m_linkSnr[{txNode, rxNode}];
+        snr.sum += snrDb;
+        snr.n++;
+    }
     if (ok || !Counting())
     {
         return;
@@ -266,6 +282,12 @@ MetricsCollector::OnDataSent(E2EKey key, uint32_t node, bool isRetry)
     it->second.dataTx++;
     it->second.retx += isRetry ? 1 : 0;
     it->second.lastActivityS = NowS();
+    if (Counting())
+    {
+        NodeStats& n = Node(node);
+        n.attempts++;
+        (isRetry ? n.retransmissions : n.firstAttempts)++;
+    }
 }
 
 void
@@ -309,6 +331,180 @@ MetricsCollector::OnDuplicate(uint32_t node)
     {
         Node(node).dataDuplicates++;
     }
+}
+
+// -------------------------------------------------------- feedback hooks --
+
+void
+MetricsCollector::OnAttemptSent(uint32_t sender,
+                                uint16_t fwd,
+                                uint16_t hopSeq,
+                                uint8_t attempt,
+                                bool ackRequested,
+                                bool learn,
+                                bool tracked,
+                                double predictedDistM,
+                                const Decision& decision)
+{
+    Outstanding& o = m_outstanding[HopId(sender, fwd, hopSeq)];
+    o.attempt = attempt;
+    o.received = false;
+    o.sentS = NowS();
+    if (m_outstanding.size() > 300000)
+    {
+        for (auto it = m_outstanding.begin(); it != m_outstanding.end();)
+        {
+            it = (NowS() - it->second.sentS > 900.0) ? m_outstanding.erase(it) : std::next(it);
+        }
+    }
+    if (tracked)
+    {
+        m_trackedAttempts++;   // consistency counters ignore the warm-up
+    }
+    if (!Counting())
+    {
+        return;
+    }
+    LinkStats& link = m_links[{sender, fwd}];
+    link.attempts++;
+    link.retx += attempt > 1 ? 1 : 0;
+    link.distSumM += predictedDistM;
+    link.predSum += decision.pMean;
+    link.firstS = link.firstS < 0 ? NowS() : link.firstS;
+    link.lastS = NowS();
+    if (ackRequested)
+    {
+        Node(sender).arRequested++;
+        m_arAttempts++;
+    }
+    m_totalAttempts++;
+}
+
+void
+MetricsCollector::OnAttemptDiscarded(uint32_t node)
+{
+    m_discardedAttempts++;
+}
+
+void
+MetricsCollector::OnHopReceived(uint32_t sender, uint32_t fwd, uint16_t hopSeq)
+{
+    auto it = m_outstanding.find(HopId(sender, fwd, hopSeq));
+    if (it == m_outstanding.end())
+    {
+        return;
+    }
+    it->second.received = true;
+    if (Counting())
+    {
+        NodeStats& n = Node(sender);
+        (it->second.attempt > 1 ? n.hopSuccessRetry : n.hopSuccessFirst)++;
+        m_links[{sender, fwd}].truthSuccess++;
+    }
+}
+
+bool
+MetricsCollector::HopWasReceived(uint32_t sender, uint32_t fwd, uint16_t hopSeq) const
+{
+    auto it = m_outstanding.find(HopId(sender, fwd, hopSeq));
+    return it != m_outstanding.end() && it->second.received;
+}
+
+void
+MetricsCollector::OnLabel(uint32_t node,
+                          uint16_t fwd,
+                          uint16_t hopSeq,
+                          int label,
+                          LabelSource source,
+                          double delayS,
+                          uint8_t attempt,
+                          bool ackRequested,
+                          bool learn,
+                          const Decision& decision)
+{
+    bool truth = HopWasReceived(node, fwd, hopSeq);
+    m_outstanding.erase(HopId(node, fwd, hopSeq));
+    WriteDecisionLine(node, fwd, hopSeq, label, source, delayS, attempt, ackRequested, learn, truth, decision);
+    m_labelsAllTime++;   // consistency counter, ignores the warm-up
+    if (!Counting())
+    {
+        return;
+    }
+    const int src = static_cast<int>(source);
+    NodeStats& n = Node(node);
+    n.labelsBySource[src]++;
+    n.labelsByValue[label]++;
+    n.labelDelaySumS += delayS;
+    n.ackTimeouts += source == LabelSource::AckTimeout ? 1 : 0;
+    LinkStats& link = m_links[{node, fwd}];
+    link.labelsBySource[src]++;
+    (label ? link.labelOnes : link.labelZeros)++;
+    m_totalLabels++;
+    m_labelsBySource[src]++;
+    m_labelDelaySumS += delayS;
+    m_labelDelays.push_back(delayS);
+    if (label == 0)
+    {
+        m_labelZeros++;
+        m_falseNegatives += truth ? 1 : 0;   // label 0 although the forwarder did get the frame
+    }
+}
+
+void
+MetricsCollector::OnDuplicateLabel(uint32_t node)
+{
+    if (Counting())
+    {
+        Node(node).duplicateLabels++;
+        m_duplicateLabelsTotal++;
+    }
+}
+
+void
+MetricsCollector::OnAckSent(uint32_t node)
+{
+    if (Counting())
+    {
+        Node(node).acksSent++;
+    }
+}
+
+void
+MetricsCollector::OnAckReceived(uint32_t node)
+{
+    if (Counting())
+    {
+        Node(node).acksReceived++;
+    }
+}
+
+void
+MetricsCollector::WriteDecisionLine(uint32_t node,
+                                    uint16_t fwd,
+                                    uint16_t hopSeq,
+                                    int label,
+                                    LabelSource src,
+                                    double delayS,
+                                    uint8_t attempt,
+                                    bool ar,
+                                    bool learn,
+                                    bool truth,
+                                    const Decision& d)
+{
+    if (!m_decisionsFile.is_open())
+    {
+        return;
+    }
+    static const char* names[] = {"ACK", "ACK_TIMEOUT", "BITMAP", "EXPIRY", "VOID"};
+    m_decisionsFile << NowS() - delayS << ',' << node << ',' << fwd << ',' << hopSeq << ',' << int(d.powerLevel) << ','
+                    << int(attempt) << ',' << ar << ',' << learn << ',' << int(d.numCandidates) << ','
+                    << int(d.chosenRank);
+    for (int i = 0; i < kMaxFeatureDim; ++i)
+    {
+        m_decisionsFile << ',' << d.x[i];
+    }
+    m_decisionsFile << ',' << d.pMean << ',' << d.width << ',' << d.score << ',' << d.lambdaE << ','
+                    << label << ',' << names[static_cast<int>(src)] << ',' << delayS << ',' << truth << '\n';
 }
 
 // ----------------------------------------------------------------- events --
@@ -468,7 +664,16 @@ MetricsCollector::Finalize()
     }
     NS_ASSERT_MSG(problems.empty(), "metrics consistency check failed (see messages above)");
 
+    std::sort(m_labelDelays.begin(), m_labelDelays.end());
     WriteSummary();
+    if (m_cfg.logLinks)
+    {
+        WriteLinks();
+    }
+    if (m_decisionsFile.is_open())
+    {
+        m_decisionsFile.close();
+    }
     if (m_cfg.logNodes)
     {
         WriteNodes();
@@ -522,7 +727,30 @@ MetricsCollector::CheckConsistency() const
         problems.push_back("delivered + dropped + in flight != created");
     }
 
-    // 3. A delivered packet cannot also carry a drop record that was counted as a drop.
+    // 3. Every tracked DATA attempt has exactly one label, is still pending, or was discarded.
+    uint64_t pendingAtEnd = 0;
+    for (const auto& probe : m_pendingProbes)
+    {
+        pendingAtEnd += probe();
+    }
+    if (m_trackedAttempts != m_labelsAllTime + pendingAtEnd + m_discardedAttempts)
+    {
+        problems.push_back("tracked attempts (" + std::to_string(m_trackedAttempts) + ") != labels (" +
+                           std::to_string(m_labelsAllTime) + ") + pending (" + std::to_string(pendingAtEnd) +
+                           ") + discarded (" + std::to_string(m_discardedAttempts) + ")");
+    }
+
+    // 4. Retransmissions = attempts - first attempts, per node.
+    for (const auto& entry : m_nodes)
+    {
+        const NodeStats& n = entry.second;
+        if (n.retransmissions != n.attempts - n.firstAttempts)
+        {
+            problems.push_back("retransmissions != attempts - first attempts at node " + std::to_string(entry.first));
+        }
+    }
+
+    // 5. A delivered packet cannot also carry a drop record that was counted as a drop.
     for (const auto& entry : m_packets)
     {
         if (entry.second.delivered && entry.second.retx > entry.second.dataTx)
@@ -552,7 +780,9 @@ MetricsCollector::WriteSummary()
     }
     f << ",ctrl_bytes_total_per_delivered,ack_frames_per_delivered,energy_per_delivered_j,"
          "energy_tx_j,energy_rx_j,energy_idle_j,rx_energy_share,fnd_s,hnd_s,jain_residual_energy,"
-         "elections_per_hour,head_tenure_mean_s";
+         "elections_per_hour,head_tenure_mean_s,attempts_total,retx_per_delivered,hop_success_truth,"
+         "ar_rate,labels_total,label_ack_frac,label_acktimeout_frac,label_bitmap_frac,label_expiry_frac,"
+         "label_void_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels";
     for (int r = 0; r < static_cast<int>(DropReason::kCount); ++r)
     {
         f << ",drop_" << Lower(DropReasonName(static_cast<DropReason>(r)));
@@ -575,6 +805,27 @@ MetricsCollector::WriteSummary()
       << (m_txJ + m_rxJ + m_idleJ) / deliveredD << ',' << m_txJ << ',' << m_rxJ << ',' << m_idleJ << ','
       << m_rxEnergyShare << ',' << m_fndS << ',' << m_hndS << ',' << m_jain << ','
       << m_electionsAfterWarmup / (windowS / 3600.0) << ',' << m_tenureMeanS;
+    uint64_t attemptsAll = 0, retxAll = 0, hopOk = 0;
+    for (const auto& entry : m_nodes)
+    {
+        attemptsAll += entry.second.attempts;
+        retxAll += entry.second.retransmissions;
+        hopOk += entry.second.hopSuccessFirst + entry.second.hopSuccessRetry;
+    }
+    const double labels = std::max<double>(1.0, m_totalLabels);
+    double delayMean = m_totalLabels ? m_labelDelaySumS / m_totalLabels : 0.0;
+    double delayP95 = m_labelDelays.empty()
+                          ? 0.0
+                          : m_labelDelays[std::min(m_labelDelays.size() - 1,
+                                                   static_cast<size_t>(0.95 * m_labelDelays.size()))];
+    f << ',' << attemptsAll << ',' << retxAll / deliveredD << ',' << (attemptsAll ? double(hopOk) / attemptsAll : 0.0)
+      << ',' << (attemptsAll ? double(m_arAttempts) / attemptsAll : 0.0) << ',' << m_totalLabels;
+    for (uint64_t c : m_labelsBySource)
+    {
+        f << ',' << c / labels;
+    }
+    f << ',' << delayMean << ',' << delayP95 << ',' << (m_labelZeros ? double(m_falseNegatives) / m_labelZeros : 0.0)
+      << ',' << m_duplicateLabelsTotal;
     for (uint32_t c : m_dropCounts)
     {
         f << ',' << c;
@@ -611,6 +862,9 @@ MetricsCollector::WriteNodes()
     {
         f << ",drop_" << Lower(DropReasonName(static_cast<DropReason>(r)));
     }
+    f << ",attempts,first_attempts,retransmissions,hop_success_first,hop_success_retry,hop_success_rate_truth,"
+         "ar_requested,acks_sent,acks_received,ack_timeouts,labels_ack,labels_acktimeout,labels_bitmap,"
+         "labels_expiry,labels_void,labels_1,labels_0,label_delay_mean_s,duplicate_labels";
     f << '\n';
     for (const auto& entry : m_nodes)
     {
@@ -633,7 +887,41 @@ MetricsCollector::WriteNodes()
         {
             f << ',' << c;
         }
-        f << '\n';
+        uint64_t nLabels = n.labelsByValue[0] + n.labelsByValue[1];
+        f << ',' << n.attempts << ',' << n.firstAttempts << ',' << n.retransmissions << ','
+          << n.hopSuccessFirst << ',' << n.hopSuccessRetry << ','
+          << (n.attempts ? double(n.hopSuccessFirst + n.hopSuccessRetry) / n.attempts : 0.0) << ','
+          << n.arRequested << ',' << n.acksSent << ',' << n.acksReceived << ',' << n.ackTimeouts;
+        for (uint64_t c : n.labelsBySource)
+        {
+            f << ',' << c;
+        }
+        f << ',' << n.labelsByValue[1] << ',' << n.labelsByValue[0] << ','
+          << (nLabels ? n.labelDelaySumS / nLabels : 0.0) << ',' << n.duplicateLabels << '\n';
+    }
+}
+
+void
+MetricsCollector::WriteLinks()
+{
+    std::ofstream f(m_cfg.outDir + "/links.csv");
+    f << std::setprecision(8);
+    f << "sender,forwarder,attempts,successes_truth,labels_1,labels_0,labels_ack,labels_acktimeout,"
+         "labels_bitmap,labels_expiry,labels_void,retransmissions,mean_distance_m,mean_snr_db,"
+         "mean_predicted_success,first_use_s,last_use_s\n";
+    for (const auto& entry : m_links)
+    {
+        const LinkStats& l = entry.second;
+        auto snr = m_linkSnr.find(entry.first);
+        double meanSnr = (snr != m_linkSnr.end() && snr->second.n) ? snr->second.sum / snr->second.n : 0.0;
+        f << entry.first.first << ',' << entry.first.second << ',' << l.attempts << ',' << l.truthSuccess << ','
+          << l.labelOnes << ',' << l.labelZeros;
+        for (uint64_t c : l.labelsBySource)
+        {
+            f << ',' << c;
+        }
+        f << ',' << l.retx << ',' << (l.attempts ? l.distSumM / l.attempts : 0.0) << ',' << meanSnr << ','
+          << (l.attempts ? l.predSum / l.attempts : 0.0) << ',' << l.firstS << ',' << l.lastS << '\n';
     }
 }
 

@@ -22,6 +22,7 @@ struct ScenarioSettings
     // run
     std::string selector = "RoundRobin";
     std::string flags = "";
+    std::string selectorAttributes = "";   // "Name=value;Name=value" set on every selector, e.g. WithFeedback=true
     std::string outDir = "results/run";
     std::string configFile = "";
     int seed = params::scenario::kSeed;

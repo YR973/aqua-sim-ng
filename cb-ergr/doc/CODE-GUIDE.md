@@ -2,8 +2,8 @@
 
 This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code keeps it in sync with the code (`doc/CODE-GUIDE.md`). If a file named here doesn't exist, check `doc/CHANGELOG.md` for a rename.
 
-> **Build status (kept up to date by Claude Code; last update: end of step D3).**
-> Working now: the whole substrate (ERGR-EMHC-g) with the `RoundRobin` selector, the SNR channel, metrics and CSVs, `cb-ergr-scenario`, and the learner maths as a pure-C++ library with tests. **Not written yet:** `FeedbackManager` and ACKs (D4), `SelectorCbV5` and the other selectors (D5, D6), handover and power patch (D7). So `Selector=CbV5` does not exist yet, and the pages below that describe it say what it *will* contain.
+> **Build status (kept up to date by Claude Code; last update: end of step D4).**
+> Working now: the whole substrate (ERGR-EMHC-g) with the `RoundRobin` selector, the SNR channel, metrics and CSVs, `cb-ergr-scenario`, and the learner maths as a pure-C++ library with tests. Hop ACKs, receipt bitmaps and retries (`FeedbackManager`) work, shown by `Selector=RoundRobin --SelectorAttributes="WithFeedback=true"` (RR+FB). **Not written yet:** `SelectorCbV5` and the other selectors (D5, D6), handover and power patch (D7). So `Selector=CbV5` does not exist yet, and the pages below that describe it say what it *will* contain.
 >
 > **Where things are now** (all under `contrib/cb-ergr/`):
 >
@@ -11,7 +11,8 @@ This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code
 > |---|---|
 > | `model/cb-ergr-params.h` | Every default value (the only place) |
 > | `model/ergr-emhc-routing.{h,cc}` | Per-node routing: beacons, election, Hmin, eligible list (`GetEligible`), forwarding, member hand-off, void NACK |
-> | `model/forwarder-selector.{h,cc}`, `selector-round-robin.{h,cc}` | The interface and the round-robin method |
+> | `model/forwarder-selector.{h,cc}`, `selector-round-robin.{h,cc}` | The interface and the round-robin method (attributes `WithFeedback`, `AckRequest`) |
+> | `model/feedback-manager.{h,cc}`, `held-packet.h` | Pending attempts, ACK/expiry timers, receipt bitmaps, retries: how a sent packet becomes a 0/1 label |
 > | `model/cb-learner-model.h`, `small-matrix.h`, `receipt-window.h`, `serial-number.h`, `energy-price.h` | The learner maths: `BeginDecision` (forgetting), `SampleTheta`, `Width`, `AddSendEvidence`, `UpdateWithLabel`, sharing, handover; matrices; receipt bitmap; energy price |
 > | `model/acoustic-link-model.*`, `gm-shadowing.*`, `cb-ergr-propagation.*` | The channel: link budget and PER, shadowing, the per-frame decision |
 > | `model/grid-geometry.*`, `neighbour-table.*`, `ergr-headers.*`, `recent-set.h`, `localisation-noise.*`, `current-drift-mobility.*` | Grid, G1 table, packet headers, duplicate filter, noisy self-position, drifting nodes |
@@ -22,7 +23,7 @@ This guide is for YR (comfortable with Java, some C++, new to ns-3). Claude Code
 > | `configs/*.txt` | `base`, `p0-published`, `smoke`, `e0-10000` |
 > | `test/cb-ergr-test-suite.cc` | All tests, named after the behaviour they check |
 >
-> Not implemented from the command list below: `--PrintAttributes`, `Selector=CbV5`. `ConfigFile` and every setting listed by `--help` work.
+> Not implemented from the command list below: `--PrintAttributes`, `Selector=CbV5`. New: `--SelectorAttributes="Name=value;Name=value"`, `--LogDecisions=true` (decisions.csv with features, label, source, delay and the ground truth), `links.csv` (always on). `ConfigFile` and every setting listed by `--help` work.
 >
 > **Upstream Aqua-Sim files we patched** (all off by default; the helper turns them on): `model/aqua-sim-phy-cmn.{h,cc}`, `model/aqua-sim-energy-model.{h,cc}`. See `doc/PATCHES.md`.
 >

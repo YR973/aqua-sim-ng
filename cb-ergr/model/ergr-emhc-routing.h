@@ -13,6 +13,8 @@
 #define CB_ERGR_ERGR_EMHC_ROUTING_H
 
 #include "ergr-headers.h"
+#include "feedback-manager.h"
+#include "held-packet.h"
 #include "forwarder-selector.h"
 #include "grid-geometry.h"
 #include "localisation-noise.h"
@@ -63,27 +65,19 @@ class ErgrEmhcRouting : public AquaSimRouting
     const NeighbourTable& Table() const { return m_table; }
     size_t PendingCount() const { return m_sent.size(); }
 
-    /// Force this node to stop (test helper); real deaths come from the energy model.
     bool IsAlive();
+
+    // --- Test hooks (used by the integration tests only) ---
+    /// Make this node a head of rank 'rank' (or a member for rank 0) without any election messages.
+    void ForceRole(uint8_t rank);
+    /// Create one data packet now, as if the traffic timer had fired.
+    void InjectPacket() { OriginatePacket(); }
+    const FeedbackManager* Feedback() const { return m_feedback.get(); }
 
   protected:
     void DoDispose() override;
 
   private:
-    /// A packet this node is handling: what is needed to (re)route it. The payload is regenerated per hop.
-    struct HeldPacket
-    {
-        E2EKey key;
-        uint32_t genTimeMs = 0;
-        uint8_t hpkt = 0;
-        int32_t prevHop = -1;          ///< node that sent it to us, -1 if we are the source
-        std::set<uint16_t> excluded;   ///< forwarders that answered with a void NACK
-        uint8_t voidRetries = 0;
-        uint16_t lastForwarder = 0;
-        bool sentOnce = false;
-        EventId expiry;
-    };
-
     // --- Self state (position estimate, cell, Hmin) ---
     void UpdateSelfEstimate();
     Vector EstimatedPosition() const;
@@ -116,7 +110,11 @@ class ErgrEmhcRouting : public AquaSimRouting
     void RoutePacket(HeldPacket pkt);
     void HandOffToHead(HeldPacket pkt);
     std::vector<Candidate> GetEligible(const HeldPacket& pkt, Time now) const;
-    void SendData(HeldPacket pkt, uint16_t forwarderId, uint8_t powerLevel, bool ackRequest);
+    /// 'decision' is null for member hand-offs (no selector involved, label is logged but not learned).
+    void SendData(HeldPacket pkt, uint16_t forwarderId, uint8_t powerLevel, bool ackRequest, const Decision* decision);
+    void SendAck(uint16_t toSender, uint16_t hopSeq);
+    double AckTimeoutS(uint16_t fwdId, double dataBytes);
+    uint16_t NextHopSeq(uint16_t fwdId);
     void OnData(const ErgrDataHeader& hdr);
     void OnNack(const ErgrNackHeader& hdr);
     void HandleVoid(const HeldPacket& pkt);
@@ -137,6 +135,10 @@ class ErgrEmhcRouting : public AquaSimRouting
     double m_firstElectionS, m_hysteresisM;
     double m_nackWindowS;
     int m_voidRetryLimit;
+    int m_maxTx;
+    double m_ackProcS, m_ackGuardS, m_phyRxDelayAirtimes;
+    bool m_retriesAlwaysAck, m_autoElection;
+    double m_expiryBeacons, m_receiptKeepBeacons;
     double m_dataStartS, m_pktRateHz;
     uint32_t m_payloadBytes;
     uint32_t m_duplicateCapacity;
@@ -167,6 +169,7 @@ class ErgrEmhcRouting : public AquaSimRouting
     NeighbourTable m_table;
     std::map<E2EKey, HeldPacket> m_sent;
     std::unique_ptr<RecentSet> m_seen;
+    std::unique_ptr<FeedbackManager> m_feedback;   ///< only for selectors that use feedback
     uint16_t m_ownSeq = 0;
     std::map<uint16_t, uint16_t> m_hopSeq;
     uint32_t m_headRoundRobin = 0;

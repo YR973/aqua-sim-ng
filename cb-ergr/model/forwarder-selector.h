@@ -70,6 +70,9 @@ struct Decision
     double pMean = 0.0;         ///< predicted success (for logging)
     double width = 0.0;         ///< model uncertainty (for logging)
     double score = 0.0;
+    double lambdaE = 0.0;       ///< energy price at decision time (logging)
+    uint8_t numCandidates = 0; ///< how many eligible heads there were
+    uint8_t chosenRank = 0;    ///< rank of the chosen one by score (1 = best), 0 if not scored
     bool valid = false;
 };
 
@@ -79,7 +82,8 @@ enum class LabelSource
     Ack,
     AckTimeout,
     Bitmap,
-    Expiry
+    Expiry,
+    Void   ///< the forwarder reported a void (NACK) before any other label arrived
 };
 
 /// Events that make a learner widen its uncertainty (spec §8.11, K§2.3: only deaths / unplanned loss).
