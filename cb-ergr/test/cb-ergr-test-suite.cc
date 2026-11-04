@@ -1751,6 +1751,18 @@ class FixedWeightPrefersTheBetterLinkAndNeverLearns : public TestCase
             fw->OnLabel(d, 0, LabelSource::Ack, Seconds(1001 + n)); // bad news changes nothing
         }
         NS_TEST_ASSERT_MSG_EQ(int(fw->Select(ctx, eligible, Seconds(2000)).fwdId), 11, "same choice after labels");
+
+        // The Weights attribute replaces the hand-set physics weights (tuned FW); without it the physics weights apply.
+        double physicsLogit = 0.0;
+        for (int i = 0; i < 9; ++i)
+        {
+            physicsLogit += params::selector::kFwWeights[i] * d.x[i];
+        }
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.pMean, Sigmoid(physicsLogit), 1e-12, "default = physics weights");
+        Ptr<SelectorFixedWeight> tuned =
+            MakeBaseline<SelectorFixedWeight>("ns3::cbergr::SelectorFixedWeight", "Weights=0,0,0,0,0,0,0,10,-3");
+        Decision dt = tuned->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ_TOL(dt.pMean, Sigmoid(10.0 * dt.x[7] - 3.0), 1e-12, "explicit weights are used");
     }
 };
 

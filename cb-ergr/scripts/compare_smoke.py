@@ -16,7 +16,7 @@ VARIANTS = {
     "CB": ("CbV5", ""),
     "CB-ackEvery": ("CbV5", "AckMode=Every"),
     "CB-noShare": ("CbV5", "EnableSharing=false"),
-    "FW": ("FixedWeight", ""),
+    "FW-phys": ("FixedWeight", ""),   # the hand-set physics weights (second baseline)
     "QL": ("QLearning", ""),
     "CARP": ("CarpEwma", ""),
     "LinQ": ("LfaQ", ""),
@@ -36,12 +36,27 @@ def a1_attributes():
     return ""
 
 
+def config_attributes(name):
+    """SelectorAttributes of configs/<name>.txt (written by scripts/tune.py); empty if the file does not exist yet."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configs", name + ".txt")
+    if not os.path.exists(path):
+        return ""
+    for line in open(path):
+        if line.startswith("SelectorAttributes"):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
 VARIANTS["A1"] = ("FittedLogistic", a1_attributes())
+# FW = fixed weights TUNED on the training seeds with the same budget as CB-tuned (scripts/tune.py); FW-phys is the
+# hand-set physics version. CB-tuned = CB with hyperparameters tuned the same way.
+VARIANTS["FW"] = ("FixedWeight", config_attributes("fw-tuned"))
+VARIANTS["CB-tuned"] = ("CbV5", config_attributes("cb-tuned"))
 # Warm start: CB that begins at (and forgets toward) the A1 weights (design P7). a1_attributes() is "Weights=w1,...,w9".
 VARIANTS["CB-warm"] = ("CbV5", a1_attributes().replace("Weights=", "PriorWeights="))
 COLUMNS = ["pdr", "energy_tx_j", "regret_mean", "regret_mean_multi_viable", "share_multi_viable", "delay_mean_s", "attempts_total", "retx_per_delivered", "hop_success_truth", "ar_rate",
            "ack_frames_per_delivered", "label_ack_frac", "false_negative_rate",
-           "ctrl_bytes_total_per_delivered", "energy_per_delivered_j"]
+           "ctrl_bytes_total_per_delivered", "energy_per_delivered_j", "energy_ack_tx_per_delivered_j", "energy_ack_rx_per_delivered_j"]
 
 
 def run_one(binary, outroot, variant, seed, args):

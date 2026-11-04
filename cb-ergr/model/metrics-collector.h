@@ -80,6 +80,11 @@ class MetricsCollector : public Object
         bool logFrames = false;
         bool logLinks = true;
         bool logDecisions = false;
+        // Radio numbers for the per-frame-type energy accounting (summary columns energy_<type>_*_per_delivered_j).
+        double bitRateBps = 0.0;       ///< 0 = accounting off
+        double preambleS = 0.0;
+        double txPowerFullW = 0.0;
+        double rxPowerW = 0.0;
     };
 
     static TypeId GetTypeId();
@@ -276,6 +281,10 @@ class MetricsCollector : public Object
     uint64_t m_regretCount = 0, m_regretCountMulti = 0;
     std::array<uint64_t, kNumFrameTypes> m_totalFramesTx{};
     std::array<uint64_t, kNumFrameTypes> m_totalBytesTx{};
+    /// Energy by frame type (J): Tx = frames sent x P_tx(level) x airtime; Rx = frames decoded by a routing layer (addressed
+    /// or overheard) x P_rx x airtime. Rx is a lower bound: frames lost to collisions or PER are charged by the PHY but not
+    /// counted here, and header-first receive (N-A) is not subtracted for overheard data.
+    std::array<double, kNumFrameTypes> m_txEnergyByType{}, m_rxEnergyByType{};
     uint64_t m_electionsAfterWarmup = 0;
 
     // results filled by Finalize()

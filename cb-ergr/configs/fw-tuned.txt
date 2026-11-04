@@ -1,0 +1,2 @@
+# FW tuned by scripts/tune.py on training seeds 101,102,103,104,105, budget 40 evaluations, N=100, 2500 s, rate 0.004, E0 10000, speed 1.0; do not edit by hand.
+SelectorAttributes = Weights=-0.637098,0.172926,1.09302,-0.0815976,0.726163,-0.303015,0.623939,13.2358,-1.16396

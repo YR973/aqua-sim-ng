@@ -3,7 +3,9 @@
  * weights are set by hand once and never learned, and there is no exploration: argmax of
  *     sigmoid(w . x) * (1 - KappaP + KappaP * x2)
  * With the same feedback as CB (ACK on every attempt), the difference between FW and CB is exactly the value
- * of learning the weights online.
+ * of learning the weights online. Without the attribute Weights the hand-set physics weights are used ("FW-phys");
+ * the tuned FW of the comparisons gets its weights from scripts/tune.py (configs/fw-tuned.txt), tuned on the training
+ * seeds with the same evaluation budget as CB's hyperparameters.
  */
 
 #ifndef CB_ERGR_SELECTOR_FIXED_WEIGHT_H
@@ -38,6 +40,8 @@ class SelectorFixedWeight : public ForwarderSelector
     Decision Select(const PacketCtx& pkt, const std::vector<Candidate>& eligible, Time now) override;
 
   private:
+    std::string m_weightsText;
+    std::array<double, FeatureBuilder::kDim> m_w{};
     SelectorServices m_services;
     std::unique_ptr<FeatureBuilder> m_features;
     double m_kappaP;

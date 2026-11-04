@@ -178,6 +178,11 @@ MetricsCollector::OnFrameTx(uint32_t node,
     NodeStats& n = Node(node);
     n.framesTx[Idx(type)]++;
     n.bytesTx[Idx(type)] += bytes;
+    if (m_cfg.bitRateBps > 0.0 && !n.isSink) // sinks have no battery: like energy_tx_j, ordinary nodes only
+    {
+        m_txEnergyByType[Idx(type)] += m_cfg.txPowerFullW * params::phy::kTxPowerLevelScale[std::min<int>(powerLevel, 2)] *
+                                       (m_cfg.preambleS + bytes * 8.0 / m_cfg.bitRateBps);
+    }
     m_totalFramesTx[Idx(type)]++;
     m_totalBytesTx[Idx(type)] += bytes;
 }
@@ -195,6 +200,10 @@ MetricsCollector::OnFrameRx(uint32_t node, FrameType type, uint32_t bytes, bool 
         return;
     }
     NodeStats& n = Node(node);
+    if (m_cfg.bitRateBps > 0.0 && !n.isSink)
+    {
+        m_rxEnergyByType[Idx(type)] += m_cfg.rxPowerW * (m_cfg.preambleS + bytes * 8.0 / m_cfg.bitRateBps);
+    }
     if (addressedToMe)
     {
         n.framesRxOk[Idx(type)]++;
@@ -800,6 +809,13 @@ MetricsCollector::WriteSummary()
          "ar_rate,labels_total,label_ack_frac,label_acktimeout_frac,label_bitmap_frac,label_expiry_frac,"
          "label_void_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels,"
          "decisions_scored,regret_mean,regret_mean_multi_viable,share_multi_viable";
+    const FrameType energyTypes[] = {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election,
+                                     FrameType::Handover, FrameType::Nack};
+    for (FrameType t : energyTypes)
+    {
+        f << ",energy_" << Lower(FrameTypeName(t)) << "_tx_per_delivered_j,energy_" << Lower(FrameTypeName(t))
+          << "_rx_per_delivered_j";
+    }
     for (int r = 0; r < static_cast<int>(DropReason::kCount); ++r)
     {
         f << ",drop_" << Lower(DropReasonName(static_cast<DropReason>(r)));
@@ -846,6 +862,10 @@ MetricsCollector::WriteSummary()
       << (m_regretCount ? m_regretSum / m_regretCount : 0.0) << ','
       << (m_regretCountMulti ? m_regretSumMulti / m_regretCountMulti : 0.0) << ','
       << (m_regretCount ? double(m_regretCountMulti) / m_regretCount : 0.0);
+    for (FrameType t : energyTypes)
+    {
+        f << ',' << m_txEnergyByType[Idx(t)] / deliveredD << ',' << m_rxEnergyByType[Idx(t)] / deliveredD;
+    }
     for (uint32_t c : m_dropCounts)
     {
         f << ',' << c;

@@ -31,6 +31,10 @@ SelectorFixedWeight::GetTypeId()
         TypeId("ns3::cbergr::SelectorFixedWeight")
             .SetParent<ForwarderSelector>()
             .AddConstructor<SelectorFixedWeight>()
+            .AddAttribute("Weights",
+                          "Nine comma-separated logistic weights; empty = the hand-set physics weights (params::selector::kFwWeights). "
+                          "scripts/tune.py writes tuned weights into configs/fw-tuned.txt.",
+                          StringValue(""), MakeStringAccessor(&SelectorFixedWeight::m_weightsText), MakeStringChecker())
             .AddAttribute("KappaP", "Weight of hop progress in the score.", DoubleValue(params::learner::kKappaP),
                           MakeDoubleAccessor(&SelectorFixedWeight::m_kappaP), MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("AckRequest", "Request an ACK on every attempt (same feedback as CB with AckMode=Every).",
@@ -47,6 +51,17 @@ SelectorFixedWeight::SetServices(const SelectorServices& services)
 {
     m_services = services;
     m_features = std::make_unique<FeatureBuilder>(services.link, m_marginFromRssi);
+    m_w = params::selector::kFwWeights;
+    if (!m_weightsText.empty())
+    {
+        std::stringstream ss(m_weightsText);
+        int i = 0;
+        for (std::string item; std::getline(ss, item, ',') && i < FeatureBuilder::kDim; ++i)
+        {
+            m_w[i] = std::stod(item);
+        }
+        NS_ABORT_MSG_IF(i != FeatureBuilder::kDim, "SelectorFixedWeight needs Weights with 9 numbers or none");
+    }
 }
 
 Decision
@@ -99,7 +114,7 @@ SelectByWeights(const FeatureBuilder& features,
 Decision
 SelectorFixedWeight::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligible, Time now)
 {
-    return SelectByWeights(*m_features, params::selector::kFwWeights, m_kappaP, m_requestAck, pkt, eligible, now);
+    return SelectByWeights(*m_features, m_w, m_kappaP, m_requestAck, pkt, eligible, now);
 }
 
 // ---------------------------------------------------------------- A1 ------

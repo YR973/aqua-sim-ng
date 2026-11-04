@@ -171,6 +171,10 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     mc.logEvents = s.logEvents;
     mc.logFrames = s.logFrames;
     mc.logDecisions = s.logDecisions;
+    mc.bitRateBps = s.bitRateBps;
+    mc.preambleS = s.preambleS;
+    mc.txPowerFullW = s.txPowerFullW;
+    mc.rxPowerW = s.rxPowerW;
     metrics->Configure(mc);
     {
         std::ofstream used(s.outDir + "/params_used.txt");

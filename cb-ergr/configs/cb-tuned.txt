@@ -1,0 +1,2 @@
+# CB tuned by scripts/tune.py on training seeds 101,102,103,104,105, budget 40 evaluations, N=100, 2500 s, rate 0.004, E0 10000, speed 1.0; do not edit by hand.
+SelectorAttributes = ExplorationScale=0.763593;Gamma=0.982639;Lambda0=0.774243;KappaP=0.52371
