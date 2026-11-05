@@ -52,10 +52,14 @@
 - Headline: FW is not beaten by any learner on this benchmark (CB-warm is within 0.011, CB-cold 0.016-0.030 below); the per-hop oracle is +0.014 to +0.032 above FW; the time-split per-candidate oracle is not above FW; CB sees ~20-34 labels per node per run. Nothing is tuned. Waiting for the user's decision.
 - Not done: oracle lambda variants and the power-lifetime test from "phase 1" (the phase-1 text was not part of this session), a separate g beacon-load fix.
 
+## State on 8 Nov 2026 (channel-aware beacons and literature scenarios)
+- Done and committed (CHANGELOG 8 Nov 20:00): ChannelAwareBeacons, x10/x11, FW-NA, 11-dimensional CB, region/burst noise band, frozen literature scenarios (`configs/scn-*.txt`, CONFIRM E46-E48), `scripts/chan.py`, Step C and Step D results in `results/reference/chan/`, `doc/TODO.md`. 61 test cases pass.
+- Headline: CB does not beat FW-NA (or FW) in base, burst or shipping scenarios; FW-NA gains at most 0.013 PDR over FW in the literature burst; the shipping-lane literature value is +0.0013 dB (null). Open: the primary noise papers could not be read (E46), squall duration/extent are my choices.
+
 ## How to check everything (end-of-session checklist)
 ```
 cd <ns-3>/ && cmake --build cmake-cache -j4
-./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 58 cases
+./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 61 cases
 python3 -I contrib/cb-ergr/scripts/check_params.py                        # rule 11
 python3 -I contrib/cb-ergr/scripts/run_sweep.py contrib/cb-ergr/sweeps/example-speed.yaml --dry-run
 ```

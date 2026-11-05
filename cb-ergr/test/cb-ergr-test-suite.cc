@@ -1757,6 +1757,14 @@ class NoiseBurstAndCounterfactualLogAreConsistent : public TestCase
         NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 0, 0), 1400.0), 0.0, 1e-12, "after the burst");
         band.endS = -1.0;
         NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 0, 0), 5000.0), -10.0, 1e-12, "negative end = stays on");
+        // 8 Nov 2026: the region is a box in x, y and depth z (rain cell over the upper layer; surface shipping lane)
+        band.yMinM = 750.0;
+        band.yMaxM = 2250.0;
+        band.zMinM = 0.0;
+        band.zMaxM = 1500.0;
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 1000, 100), 5000.0), -10.0, 1e-12, "inside the box");
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 2500, 100), 5000.0), 0.0, 1e-12, "outside in y");
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 1000, 2000), 5000.0), 0.0, 1e-12, "too deep");
 
         std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-cf";
         ScenarioSettings st;
