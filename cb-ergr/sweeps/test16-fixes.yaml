@@ -1,0 +1,12 @@
+# Test 16 (PDR of P0 against speed), 20 training seeds, with and without the preamble fix (6 Nov 2026, step 4, fix 1).
+binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
+out_root: results/test16-fixes
+seeds: [101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120]
+common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/p0-published.txt, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false}
+runs:
+  - {name: TPre0.1-ideal, selector: RoundRobin, settings: {TPre: 0.1, IdealLinks: true, ShadowSigmaDb: 0}}
+  - {name: TPre0-ideal,   selector: RoundRobin, settings: {TPre: 0.0, IdealLinks: true, ShadowSigmaDb: 0}}
+  - {name: TPre0.1-calib, selector: RoundRobin, settings: {TPre: 0.1}}
+  - {name: TPre0-calib,   selector: RoundRobin, settings: {TPre: 0.0}}
+sweeps:
+  - {factor: CurrentSpeed, values: [0, 0.5, 1.0, 1.5]}

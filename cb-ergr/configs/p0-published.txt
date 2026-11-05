@@ -19,3 +19,6 @@ BitRateBps = 17800
 TxPowerFullW = 8
 RxPowerW = 0.8
 Mac = Csma
+# Preamble: the paper gives none (Aqua-Sim default 0); with the spec default 0.1 s every frame costs 0.1 s before its bits and P0 loses 0.18 PDR to the
+# resulting channel load (CHANGELOG 6 Nov 14:00 and 16:00). The spec sweeps TPre in {0, 0.1, ...}; 0.1 is kept in g-sensitivity.txt.
+TPre = 0

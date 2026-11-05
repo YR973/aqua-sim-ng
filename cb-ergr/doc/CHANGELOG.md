@@ -2,6 +2,19 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-06 16:00 — Step 4, fix 1: no preamble in the paper-aligned configs (TPre = 0)
+- What: `TPre = 0` in `configs/p0-published.txt` and `configs/g-base.txt` (the spec default 0.1 s stays in the code and in `configs/g-sensitivity.txt`).
+- Why: the loss budget showed that the loss is contention (DATA-DATA and beacon collisions) and that contention scales with the airtime, which at 17.8 kbit/s is mostly preamble (25 B beacon: 0.111 s of which 0.100 s preamble; 150 B data: 0.175 s of which 0.100 s). The paper gives no preamble and Aqua-Sim's own default is 0; the spec sweep includes TPre = 0.
+- Effect on test 16 (P0, 20 seeds 101-120, CSMA; PDR mean +- 95% CI; `results/reference/test16-fixes/aggregate.csv`):
+  | speed (m/s) | paper | TPre 0.1, ideal links | **TPre 0, ideal links** | TPre 0.1, calibrated | TPre 0, calibrated |
+  |---|---|---|---|---|---|
+  | 0 | 0.875 | 0.644 +- 0.029 | **0.821 +- 0.019** | 0.524 +- 0.030 | 0.631 +- 0.031 |
+  | 0.5 | 0.84 | 0.601 +- 0.032 | **0.790 +- 0.022** | 0.500 +- 0.035 | 0.631 +- 0.030 |
+  | 1.0 | 0.805 | 0.556 +- 0.028 | **0.761 +- 0.023** | 0.459 +- 0.031 | 0.606 +- 0.029 |
+  | 1.5 | 0.752 | 0.520 +- 0.032 | **0.737 +- 0.026** | 0.429 +- 0.036 | 0.593 +- 0.031 |
+  Level gap at 0 m/s against the paper: **-0.231 -> -0.054** (ideal links), -0.351 -> -0.244 (calibrated channel, which is our own link model, not the paper's BER 1e-9). Fall from 0 to 1.5 m/s: 0.085 against the paper's 0.123 (ideal links; 0.125 before the fix). Energy per delivered packet (ideal links, 0 m/s): 58.3 J -> 21.1 J. The residual gap (-0.05 at 0 m/s, -0.015 at 1.5 m/s) is inside twice the confidence interval at 1.5 m/s and about 2.5x at 0 m/s.
+- Spec/design deviation: a choice for the paper-aligned configs only; the spec default (0.1 s) is untouched, and `TPre` can be swept.
+
 ## 2026-11-06 14:00 — Steps 2 and 3: loss budget (P0 and g) and review of the PHY receive model
 - What: `model/loss-budget.{h,cc}` (reporting only): every DATA hop attempt gets ONE cause when it did not arrive; every unresolved packet gets a cause (`packets.csv` column `loss_cause`); airtime by frame type; `loss_budget.csv` per run; `scripts/loss_budget.py` (P0 and g, 1 and 10 sources, ideal links, 0 m/s, N = 300, 20 seeds 101-120); `results/reference/loss-budget/`.
 - Why: user request of 6 Nov 2026, steps 2 and 3: find out why the network is so lossy.
