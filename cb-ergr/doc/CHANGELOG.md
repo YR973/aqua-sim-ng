@@ -9,7 +9,7 @@ One entry per change. Format fixed by the kickoff (rule 8).
   * `scripts/headroom.py`: 20 seeds (101-120), PDR and energy per delivered packet, paired 95% CI of the gaps, an "Oracle+power" column; test for the oracle with power levels (49 cases pass).
 - Why: user request of 6 Nov 2026, steps 4 and 5; from now on every compared number uses 20 seeds.
 - Effect on results: all ERGR-EMHC-g results with `Mac=Csma` and feedback produced before this entry are superseded.
-- Setup of step 5: `configs/g-base.txt` (paper radio, TPre = 0, lean beacons, solicit, equal-Hmin fallback), calibrated channel (shadowing sigma 5 dB), 0.07 pkt/s per source, 2000 s, 0 m/s NOT set (speed 1 m/s as in g-base), seeds 101-120. "FW-tuned" = `configs/fw-tuned-v2.txt` (tuned on 5 Nov at N = 100 in the old benchmark with TPre 0.1; not retuned: tuning is stopped). Oracle = per-hop oracle (best true success x progress), Oracle+power as above with E_tx = 8 W x scale x airtime.
+- Setup of step 5: `configs/g-base.txt` (paper radio, TPre = 0, lean beacons, solicit, equal-Hmin fallback), calibrated channel (shadowing sigma 5 dB), 0.07 pkt/s per source, 2000 s, node speed 1 m/s (as in g-base), seeds 101-120. "FW-tuned" = `configs/fw-tuned-v2.txt` (tuned on 5 Nov at N = 100 in the old benchmark with TPre 0.1; not retuned: tuning is stopped). Oracle = per-hop oracle (best true success x progress), Oracle+power as above with E_tx = 8 W x scale x airtime.
 - Result:
 
 PDR (mean of 20 seeds) and the paired gaps (95% CI)
@@ -40,9 +40,9 @@ Energy per delivered packet (J; transmit + receive + idle of all ordinary nodes)
 | 300 | Aloha | 30 | 38.9 | 48.6 | 42.2 | 42.8 | 41.9 | 37.6 |
 
   1. **No scenario reaches an oracle - FW gap of 0.1: the gap is +0.011 to +0.023 (95% CI about +-0.01).** The oracle - RR+FB gap is 0.055-0.097 and the oracle - RR gap 0.26-0.40; so nearly everything between round robin and the oracle is obtained by hop feedback plus the static feature rule (FW); what is left for any learner to win over FW is 1-2 PDR points. The oracle's hop success is 0.43-0.70: the remaining losses are collisions (DATA with DATA and with beacons), which no forwarder choice avoids.
-  2. **Energy per delivered packet:** RR is cheapest (no ACKs) but delivers 0.34-0.45; with feedback FW needs 12.6-48 J, the oracle 12.1-48 J (the same), and ACKs and retries cost 7-30% more than RR for the extra 0.3-0.4 PDR.
+  2. **Energy per delivered packet:** RR is cheapest (no ACKs) but delivers 0.34-0.45; with feedback FW needs 12.6-48 J, the oracle 12.1-48 J (the same), and ACKs and retries cost 5-39% more energy than RR for the extra 0.1-0.4 PDR (0.1 only at 30 sources).
   3. **Oracle with power levels: PDR equal or higher (+0.000 to +0.037; the largest gain at 30 sources: N = 100, Csma 0.626 -> 0.663, Aloha 0.666 -> 0.696) and energy per delivered packet 4-22% lower** (N = 100, Csma, 30 sources 17.0 J -> 13.3 J, -22%; N = 300, Csma, 10 sources 40.5 -> 38.1 J, -6%). So power control is the only place where the oracle beats the static rule by more than noise (PDR +0.02-0.04 at 30 sources, energy -5 to -22%), though still not near 0.1 of PDR. A caution about the mechanism: lowering the power does NOT cut interference in this PHY, because every node within R still gets a copy of every frame and an undecodable frame still counts as a collision (see the step 3 review); the PDR gain at 30 sources therefore comes from somewhere else (less Tx energy, fewer dead receivers) and is not tested here.
-  4. Csma vs Aloha now give similar PDR (differences 0 to 0.07, Csma higher at N = 100 with 10 sources, lower at others), as the loss budget predicted.
+  4. Csma vs Aloha now give similar PDR (oracle: Csma +0.004 / -0.040 at N = 100 with 10 / 30 sources, +0.005 / -0.014 at N = 300), as the loss budget predicted.
 
 ## 2026-11-06 16:00 — Step 4, fix 1: no preamble in the paper-aligned configs (TPre = 0)
 - What: `TPre = 0` in `configs/p0-published.txt` and `configs/g-base.txt` (the spec default 0.1 s stays in the code and in `configs/g-sensitivity.txt`).
