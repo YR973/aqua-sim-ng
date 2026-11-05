@@ -2,6 +2,25 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 14:00 — Step B: headroom table
+- What: `scripts/headroom.py` (runs RR, RR+FB, FW-phys, FW-tuned and the Oracle for N in {100, 300} x Mac in {Csma, Aloha} x NumSources in {10, 30}, 5 seeds 106-110, `configs/g-base.txt` otherwise, lean beacons on); results in `results/reference/headroom/`.
+- Why: user item B8: measure how much room there is above the static rule before comparing methods again; only scenarios with an oracle - FW gap of roughly >= 0.1 are meaningful for "does learning help".
+- Effect on results: none (measurement only). FW-tuned = the weights of `configs/fw-tuned.txt`, which were tuned on the OLD benchmark (5 kbit/s, Aloha, N = 100); they are not retuned here.
+- Result (PDR mean of 5 seeds; oracle hop success = ground-truth share of data attempts the chosen forwarder really received):
+
+| N | MAC | sources | oracle hop success | oracle PDR | FW-phys | FW-tuned | RR+FB | RR | oracle - FW (best) | oracle - RR+FB | oracle - RR |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 100 | Csma | 10 | 0.32 | 0.466 | 0.497 | 0.482 | 0.436 | 0.303 | -0.031 | 0.03 | 0.163 |
+| 100 | Csma | 30 | 0.181 | 0.267 | 0.257 | 0.254 | 0.231 | 0.22 | 0.01 | 0.035 | 0.047 |
+| 100 | Aloha | 10 | 0.48 | 0.54 | 0.521 | 0.505 | 0.466 | 0.306 | 0.019 | 0.074 | 0.234 |
+| 100 | Aloha | 30 | 0.334 | 0.291 | 0.29 | 0.291 | 0.264 | 0.216 | 0.0 | 0.028 | 0.076 |
+| 300 | Csma | 10 | 0.312 | 0.258 | 0.262 | 0.275 | 0.22 | 0.174 | -0.016 | 0.038 | 0.084 |
+| 300 | Csma | 30 | 0.22 | 0.157 | 0.152 | 0.15 | 0.149 | 0.124 | 0.005 | 0.008 | 0.033 |
+| 300 | Aloha | 10 | 0.49 | 0.31 | 0.3 | 0.303 | 0.298 | 0.162 | 0.008 | 0.012 | 0.149 |
+| 300 | Aloha | 30 | 0.381 | 0.186 | 0.188 | 0.196 | 0.169 | 0.119 | -0.009 | 0.018 | 0.067 |
+
+  **No scenario reaches an oracle - FW gap of 0.1: the gap is between -0.03 and +0.02 everywhere** (the oracle is a per-hop oracle; it does not beat FW on PDR, in three cells it is below it). The oracle's hop success is only 0.18-0.49, so most hops are lost for reasons no forwarder choice can change (collisions, member hand-offs without a known head, see the step A entry). The gap to plain round robin is 0.03-0.23, and to round robin with hop ACKs 0.01-0.07, so what separates the methods is mostly having feedback and the feature rule, not learning the weights. Largest oracle - RR gaps: N = 100, 10 sources (0.16 with Csma, 0.23 with Aloha). Consequence: none of the 8 scenarios can show that learning helps; the CB-vs-FW comparisons below are reported for completeness and for the heterogeneous scenario, which is built to create headroom.
+
 ## 2026-11-05 12:00 — Step A: the benchmark follows the paper (CSMA, paper radio and traffic, P0 unchanged, lean beacons, equal-Hmin fallback, lifetime)
 - What:
   1. **ERGR-EMHC-g now uses P0's settings** (`configs/g-base.txt`): 17.8 kbit/s, 8 W / 0.8 W / 0.008 W, 300 J, 3 sinks, N = 300, `NumSources` = 10 at 0.07 pkt/s each, 2000 s; data from 300 s and the first 300 s discarded (the election start-up needs ~55 s + 2 s x cell id; the paper discards 150 s). The old low-rate setting is `configs/g-sensitivity.txt` (sensitivity runs only). `sweeps/numsources-{p0,g}.yaml` sweep the number of sources over {10, 15, 30, 45}.
@@ -24,7 +43,7 @@ One entry per change. Format fixed by the kickoff (rule 8).
   **Level gap at 0 m/s: -0.25 (CSMA, ideal links) and -0.37 (calibrated channel) against the paper.** The trend is reproduced (fall of 0.13 / 0.11 over 0 -> 1.5 m/s, -21% / -22%, paper -0.12, -14%). CSMA instead of Aloha changes the level by only +0.00 to +0.03: carrier sense cannot help much when propagation takes up to 1 s and one frame lasts 0.17 s, so hidden transmissions still collide. What does matter is the number of simultaneous sources: with ideal links and ONE source at 0.07 pkt/s PDR is 0.82 (hop success 0.957), with ten sources 0.54 (hop success 0.835). The paper's 0.875 with ten sources needs a much less contended channel than Aqua-Sim's PHY collision model gives here; the cause was not found (packet size is the same 150 B).
 - Result 2, load sweep (P0 and g, 5 seeds, `results/reference/numsources-*/`): PDR falls with the number of sources in both, as in the paper (P0 calibrated 0.43 / 0.39 / 0.32 / 0.26 for 10 / 15 / 30 / 45 sources; paper 0.82 / 0.71 / 0.615 for 15 / 30 / 45).
   **With the paper's settings ERGR-EMHC-g is much worse than P0:** round robin PDR 0.156 / 0.159 / 0.141 / 0.111 against P0's 0.43 / 0.39 / 0.32 / 0.26; g with hop ACKs (RR+FB) 0.25 / 0.22 / 0.15 / 0.11; FW (physics weights) 0.25 / 0.22 / 0.17 / 0.12; oracle 0.29 / 0.25 / 0.18 / 0.12.
-  Cause found for g round robin (seed 101, 10 sources): 480 of 1119 packets (43%) die at the SOURCE with zero hops, because the member has no usable head row (`NO_HEAD_FOR_HANDOFF`: in 483 of 521 cases the table has rows from its own cell but no head among them). With `LeanBeacons=false` this falls to 142 void drops (PDR 0.097 -> 0.097 only, since TTL losses grow), with Aloha instead of Csma it does not improve (576). It is a head-discovery gap of the lean-beacon design (head beacons stretch to 100 s, a member that misses one waits; Hello frames do not create a table row). Not fixed, because the instruction was to report before building anything new.
+  Cause found for g round robin (seed 101, 10 sources): 480 of 1119 packets (43%) die at the SOURCE with zero hops, because the member has no usable head row (`NO_HEAD_FOR_HANDOFF`: in 483 of 521 cases the table has rows from its own cell but no head among them). With `LeanBeacons=false` this falls to 142 void drops (PDR 0.105 -> 0.097, since silent TTL losses grow instead), with Aloha instead of Csma it does not improve (576). It is a head-discovery gap of the lean-beacon design (head beacons stretch to 100 s, a member that misses one waits; Hello frames do not create a table row). Not fixed, because the instruction was to report before building anything new.
 
 ## 2026-11-05 06:00 — Quorum dead-head detection (D§3 P4)
 - What: routing attribute `QuorumDetection` (default **false**) with `DeadCheckPeriodS`, `DeadGuardS`, `DeadQuorum`, `DeadReportTtlS`, `DeadReportRepeatS`, `DeadReportJitterS` (all defaults in `params::deadhead`); election-frame kind `DeadReport` (same 9 B; nodeId = reporter, cellId = the silent head's cell, scoreQ = the silent head's id); `ErgrEmhcRouting::DeadCheckTick/SendDeadReport/OnDeadReport/DeclareDead/IsOverdue/IsRelevantHead`; `MetricsCollector::OnDeadDeclared` and summary columns `dead_declarations, dead_false_declarations, dead_by_quorum, dead_by_expiry, dead_heads_detected, dead_first_latency_mean_s`; scenario settings `QuorumDetection, DeadQuorum, DeadGuardS, DeadReportRepeatS`; `scripts/quorum_grid.py`; 1 test (48 cases pass).
