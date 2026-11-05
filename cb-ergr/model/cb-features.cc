@@ -79,5 +79,39 @@ FeatureBuilder::Build(const PacketCtx& pkt, const NeighbourEntry& nb, int level,
     return x;
 }
 
+double
+FeatureBuilder::NoiseCorrectionDb(const PacketCtx& pkt, const NeighbourEntry& nb) const
+{
+    if (!nb.hasChannel)
+    {
+        return 0.0;
+    }
+    // The beacon SNR was measured at THIS node, so it contains this node's noise; data to the candidate meets the candidate's noise.
+    const bool measuredHere = m_marginFromRssi && nb.hasSnr;
+    const double assumedDb = (measuredHere && pkt.hasMyNoise) ? pkt.myNoiseDb : m_link->NoiseLevelDb();
+    return nb.noiseDb - assumedDb;
+}
+
+double
+FeatureBuilder::NoiseCorrectedMarginFeature(const PacketCtx& pkt, const NeighbourEntry& nb, int level, Time now) const
+{
+    const double marginDb = PredictedMarginDb(pkt, nb, level, now) - NoiseCorrectionDb(pkt, nb);
+    return Clip01((marginDb + params::learner::kMarginOffsetDb) / params::learner::kMarginScaleDb);
+}
+
+FeatureBuilder::FullFeatures
+FeatureBuilder::BuildFull(const PacketCtx& pkt, const NeighbourEntry& nb, int level, Time now) const
+{
+    const Features base = Build(pkt, nb, level, now);
+    FullFeatures x;
+    for (int i = 0; i < kDim; ++i)
+    {
+        x[i] = base[i];
+    }
+    x[kNoiseMargin] = NoiseCorrectedMarginFeature(pkt, nb, level, now);
+    x[kLossRate] = nb.hasChannel ? Clip01(nb.lossRate) : 0.0;
+    return x;
+}
+
 } // namespace cbergr
 } // namespace ns3

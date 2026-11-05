@@ -40,6 +40,8 @@ SelectorFixedWeight::GetTypeId()
             .AddAttribute("AckRequest", "Request an ACK on every attempt (same feedback as CB with AckMode=Every).",
                           BooleanValue(params::selector::kRequestAckOnFirstAttempt), MakeBooleanAccessor(&SelectorFixedWeight::m_requestAck),
                           MakeBooleanChecker())
+            .AddAttribute("NoiseAware", "FW-NA: replace x8 by the noise-corrected margin x10 (same weight; needs ChannelAwareBeacons).",
+                          BooleanValue(false), MakeBooleanAccessor(&SelectorFixedWeight::m_noiseAware), MakeBooleanChecker())
             .AddAttribute("MarginFromRssi", "Use the measured beacon SNR for the margin feature.",
                           BooleanValue(params::learner::kMarginFromRssi),
                           MakeBooleanAccessor(&SelectorFixedWeight::m_marginFromRssi), MakeBooleanChecker());
@@ -71,7 +73,8 @@ SelectByWeights(const FeatureBuilder& features,
                 bool requestAck,
                 const PacketCtx& pkt,
                 const std::vector<Candidate>& eligible,
-                Time now)
+                Time now,
+                bool noiseAware)
 {
     Decision best;
     if (eligible.empty())
@@ -83,6 +86,10 @@ SelectByWeights(const FeatureBuilder& features,
     for (const Candidate& c : eligible)
     {
         FeatureBuilder::Features x = features.Build(pkt, *c.nb, fullLevel, now);
+        if (noiseAware)
+        {
+            x[params::feature::kSnrMargin] = features.NoiseCorrectedMarginFeature(pkt, *c.nb, fullLevel, now); // FW-NA: x8 -> x10
+        }
         double logit = 0.0;
         for (int i = 0; i < FeatureBuilder::kDim; ++i)
         {
@@ -114,7 +121,7 @@ SelectByWeights(const FeatureBuilder& features,
 Decision
 SelectorFixedWeight::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligible, Time now)
 {
-    return SelectByWeights(*m_features, m_w, m_kappaP, m_requestAck, pkt, eligible, now);
+    return SelectByWeights(*m_features, m_w, m_kappaP, m_requestAck, pkt, eligible, now, m_noiseAware);
 }
 
 // ---------------------------------------------------------------- A1 ------

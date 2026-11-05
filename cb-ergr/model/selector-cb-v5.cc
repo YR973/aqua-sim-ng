@@ -85,6 +85,8 @@ SelectorCbV5::GetTypeId()
             .AddAttribute("MarginFromRssi", "Use the measured SNR of the candidate's last beacon for the margin feature.",
                           BooleanValue(params::learner::kMarginFromRssi),
                           MakeBooleanAccessor(&SelectorCbV5::m_marginFromRssi), MakeBooleanChecker())
+            .AddAttribute("ChannelFeatures", "Use the channel-aware features x10 (noise-corrected margin) and x11 (advertised loss rate); needs ChannelAwareBeacons.",
+                          BooleanValue(false), MakeBooleanAccessor(&SelectorCbV5::m_channelFeatures), MakeBooleanChecker())
             .AddAttribute("AckGate", "Uncertainty used by the gated mode: Logit (spec width > TauW) or ProbStd (p(1-p) width > ProbStdThreshold).",
                           EnumValue(AckGate::Logit), MakeEnumAccessor<AckGate>(&SelectorCbV5::m_ackGate),
                           MakeEnumChecker(AckGate::Logit, "Logit", AckGate::ProbStd, "ProbStd", AckGate::ThompsonDisagree, "ThompsonDisagree"))
@@ -201,7 +203,7 @@ SelectorCbV5::SetServices(const SelectorServices& services)
         {
             w[i] = std::stod(item);
         }
-        NS_ABORT_MSG_IF(i != kDim, "PriorWeights needs 9 comma-separated numbers");
+        NS_ABORT_MSG_IF(i != 9 && i != kDim, "PriorWeights needs 9 or 11 comma-separated numbers (missing ones are 0)");
         m_model.SetCellPrior(w);
         m_model.SetTheta(w);
     }
@@ -273,7 +275,22 @@ SelectorCbV5::PredictedMarginDb(const PacketCtx& pkt, const NeighbourEntry& nb, 
 SelectorCbV5::Features
 SelectorCbV5::BuildFeatures(const PacketCtx& pkt, const NeighbourEntry& nb, int level, Time now) const
 {
-    return m_features->Build(pkt, nb, level, now);
+    Features x; // x10 and x11 stay 0 unless ChannelFeatures
+    if (m_channelFeatures)
+    {
+        const FeatureBuilder::FullFeatures full = m_features->BuildFull(pkt, nb, level, now);
+        for (int i = 0; i < kDim; ++i)
+        {
+            x[i] = full[i];
+        }
+        return x;
+    }
+    const FeatureBuilder::Features base = m_features->Build(pkt, nb, level, now);
+    for (int i = 0; i < FeatureBuilder::kDim; ++i)
+    {
+        x[i] = base[i];
+    }
+    return x;
 }
 
 double
@@ -509,7 +526,8 @@ SelectorCbV5::OnHandoverOut(ErgrHandoverHeader& h, Time now)
     {
         return false; // nothing learned yet
     }
-    const int dim = kDim;
+    const int dim = WireDim();
+    h.dim = static_cast<uint8_t>(dim);
     int k = 0;
     for (int i = 0; i < dim; ++i)
     {
@@ -531,8 +549,9 @@ SelectorCbV5::OnHandoverIn(const ErgrHandoverHeader& h, Time now)
     {
         return;
     }
-    const int dim = kDim;
+    const int dim = std::min<int>(h.dim, kDim);
     CbLearnerModel<kDim>::Snapshot snap;
+    snap.A = Mat<kDim>::ScaledIdentity(m_lambda0); // dimensions the sender did not transmit start from the prior
     int k = 0;
     for (int i = 0; i < dim; ++i)
     {
@@ -656,7 +675,8 @@ SelectorCbV5::OnBeaconTx(ErgrBeaconHeader& beacon, Time now)
     const auto& theta = m_model.Theta();
     const auto evidence = m_model.OwnEvidenceDiag();
     beacon.hasBlob = true;
-    for (int i = 0; i < kDim; ++i)
+    beacon.blob.dim = static_cast<uint8_t>(WireDim());
+    for (int i = 0; i < WireDim(); ++i)
     {
         beacon.blob.theta[i] = QuantiseTheta(theta[i]);
         beacon.blob.diagA[i] = QuantiseDiag(evidence[i]);

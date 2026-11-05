@@ -60,6 +60,10 @@ class ErgrEmhcRouting : public AquaSimRouting
         m_decisionObserver = observer;
     }
     /// Source of measured beacon SNR (RSSI): (sender node, my node, snr out) -> found?
+    /// ChannelAwareBeacons: the excess ambient noise (dB above the link model's noise) this node's modem measures at its own position now.
+    void SetNoiseMeter(std::function<double()> meter) { m_noiseMeter = meter; }
+    double NoiseEstimateDb() const { return m_noiseEwmaDb; }
+    double LossEstimate() const { return AddressedLossRate(); }
     void SetSnrMeter(std::function<bool(uint32_t, uint32_t, double&)> meter) { m_snrMeter = meter; }
 
     /// Schedule beacons, elections and traffic. Call once at time 0.
@@ -185,6 +189,18 @@ class ErgrEmhcRouting : public AquaSimRouting
     bool m_retriesAlwaysAck, m_autoElection;
     double m_expiryBeacons, m_receiptKeepBeacons;
     bool m_keepRecord = true;
+    // --- ChannelAwareBeacons (7 Nov 2026) ---
+    bool m_channelAware = false;
+    double m_noiseTauS = 30.0, m_lossTauS = 300.0;
+    std::function<double()> m_noiseMeter;
+    bool m_noiseInit = false;
+    double m_noiseEwmaDb = 0.0;                  ///< smoothed ambient noise at this node (dB, band noise level)
+    double m_lossRcv = 0.0, m_lossLost = 0.0;    ///< decayed counts of DATA frames addressed to this node: seen / missing (hopSeq gaps)
+    double m_lossUpdateS = 0.0;
+    std::map<uint16_t, uint16_t> m_lastHopSeqFrom;   ///< per upstream sender: highest hopSeq of a frame addressed to me
+    void NoiseTick();
+    void NoteAddressedData(uint16_t sender, uint16_t hopSeq);
+    double AddressedLossRate() const;
     Ptr<ForwarderSelector> m_shadow;
     std::string m_censoredPolicy = "Drop";
     int m_suspectTimeouts;

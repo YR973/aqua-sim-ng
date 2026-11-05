@@ -10,6 +10,15 @@
   "kShadowTauS": 120.0,
   "kShadowTickS": 5.0
  },
+ "channelaware": {
+  "kEnabled": false,
+  "kLossTauS": 300.0,
+  "kMaxGap": 8,
+  "kNoiseRefDb": 20.0,
+  "kNoiseSamplePeriodS": 5.0,
+  "kNoiseStepDb": 0.5,
+  "kNoiseTauS": 30.0
+ },
  "deadhead": {
   "kCheckPeriodS": 10.0,
   "kGuardS": 10.0,
@@ -38,8 +47,11 @@
   "kDepthAdvantage": 2,
   "kDistance": 0,
   "kEntryAge": 4,
+  "kFullDim": 11,
   "kHopProgress": 1,
   "kIntercept": 8,
+  "kLossRate": 10,
+  "kNoiseMargin": 9,
   "kQueue": 5,
   "kSnrMargin": 7
  },

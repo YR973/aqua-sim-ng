@@ -126,6 +126,13 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("RetriesAlwaysAck", "Retries always request an ACK (spec §9.12).",
                           BooleanValue(params::timers::kRetriesAlwaysAck),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_retriesAlwaysAck), MakeBooleanChecker())
+            .AddAttribute("ChannelAwareBeacons", "Heads and sinks advertise their ambient noise and the loss rate of DATA frames addressed to them (+2 B).",
+                          BooleanValue(params::channelaware::kEnabled),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_channelAware), MakeBooleanChecker())
+            .AddAttribute("NoiseTauS", "Time constant of the ambient-noise EWMA (s).", DoubleValue(params::channelaware::kNoiseTauS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_noiseTauS), MakeDoubleChecker<double>(0.1))
+            .AddAttribute("LossTauS", "Time constant of the pooled addressed-frame loss rate (s).", DoubleValue(params::channelaware::kLossTauS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_lossTauS), MakeDoubleChecker<double>(0.1))
             .AddAttribute("KeepRecordAfterTimeout", "Keep the learning record after an ACK timeout so a late ACK or bitmap can label it (false = old rule).",
                           BooleanValue(params::feedback::kKeepRecordAfterTimeout),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_keepRecord), MakeBooleanChecker())
@@ -412,6 +419,10 @@ ErgrEmhcRouting::Start()
     UpdateOwnCell();
 
     // Beacons: random first phase so nodes do not all transmit together (spec §5.2).
+    if (m_channelAware)
+    {
+        Simulator::Schedule(Seconds(m_uniform->GetValue(0.0, params::channelaware::kNoiseSamplePeriodS)), &ErgrEmhcRouting::NoiseTick, this);
+    }
     Simulator::Schedule(Seconds(m_uniform->GetValue(0.0, m_beaconPeriodS)), &ErgrEmhcRouting::BeaconTick, this);
     if (m_quorumDetection && !m_isSink)
     {
@@ -667,6 +678,16 @@ ErgrEmhcRouting::SendBeacon()
         hdr.receipts = m_feedback->BuildReceipts(Simulator::Now());
     }
 
+    if (m_channelAware && (m_isHead || m_isSink) && m_noiseInit)
+    {
+        hdr.hasChannel = true;
+        hdr.noiseQ = static_cast<uint8_t>(std::max(0.0, std::min(255.0, std::round((m_noiseEwmaDb - params::channelaware::kNoiseRefDb) /
+                                                                                   params::channelaware::kNoiseStepDb))));
+        // decay the counts to now before reading the rate
+        const double keep = std::exp(-(Simulator::Now().GetSeconds() - m_lossUpdateS) / m_lossTauS);
+        const double total = (m_lossRcv + m_lossLost) * keep;
+        hdr.lossQ = static_cast<uint8_t>(std::round(255.0 * (total >= 1.0 ? std::min(1.0, m_lossLost * keep / total) : 0.0)));
+    }
     m_selector->OnBeaconTx(hdr, Simulator::Now()); // may attach a model blob (spec §8.10)
     m_metrics->OnBeaconParts(hdr.BaseBytes(), hdr.ReceiptBytes(), hdr.BlobBytes(), hdr.QBytes());
     Ptr<Packet> packet = Create<Packet>(0);
@@ -741,6 +762,12 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
     entry.nextBeaconIn = Seconds(hdr.nextBeaconDs / 10.0);
     entry.hasQ = hdr.hasQ;
     entry.advertisedQ = hdr.qValue * params::selector::kQlValueScale;
+    if (hdr.hasChannel)
+    {
+        entry.hasChannel = true;
+        entry.noiseDb = params::channelaware::kNoiseRefDb + hdr.noiseQ * params::channelaware::kNoiseStepDb;
+        entry.lossRate = hdr.lossQ / 255.0;
+    }
     double snrDb = 0.0;
     if (m_snrMeter && m_snrMeter(hdr.nodeId, m_id, snrDb))
     {
@@ -1172,6 +1199,8 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
     ctx.myBattery = ResidualFraction();
     ctx.myEnergyJ = GetNetDevice()->GetPhy()->EM()->GetEnergy();
     ctx.dataBytes = m_payloadBytes + 17;
+    ctx.hasMyNoise = m_channelAware && m_noiseInit;
+    ctx.myNoiseDb = m_noiseEwmaDb;
     Decision decision;
     if (m_metrics->MeasureCpu())
     {
@@ -1449,9 +1478,70 @@ ErgrEmhcRouting::HandleVoid(const HeldPacket& pkt)
 }
 
 // Spec §9.2: DATA addressed to me.
+// What a modem measures between frames: the link model's noise level plus whatever extra noise is present at this node's position.
+void
+ErgrEmhcRouting::NoiseTick()
+{
+    if (IsAlive() && m_linkModel)
+    {
+        const double sampleDb = m_linkModel->NoiseLevelDb() + (m_noiseMeter ? m_noiseMeter() : 0.0);
+        if (!m_noiseInit)
+        {
+            m_noiseEwmaDb = sampleDb;
+            m_noiseInit = true;
+        }
+        else
+        {
+            const double alpha = 1.0 - std::exp(-params::channelaware::kNoiseSamplePeriodS / m_noiseTauS);
+            m_noiseEwmaDb += alpha * (sampleDb - m_noiseEwmaDb);
+        }
+    }
+    Simulator::Schedule(Seconds(params::channelaware::kNoiseSamplePeriodS), &ErgrEmhcRouting::NoiseTick, this);
+}
+
+// Frames addressed to this node only: a gap in the hopSeq of one upstream sender is a frame that never arrived.
+void
+ErgrEmhcRouting::NoteAddressedData(uint16_t sender, uint16_t hopSeq)
+{
+    const double nowS = Simulator::Now().GetSeconds();
+    const double keep = std::exp(-(nowS - m_lossUpdateS) / m_lossTauS);
+    m_lossRcv *= keep;
+    m_lossLost *= keep;
+    m_lossUpdateS = nowS;
+    auto it = m_lastHopSeqFrom.find(sender);
+    if (it == m_lastHopSeqFrom.end())
+    {
+        m_lastHopSeqFrom[sender] = hopSeq;
+        m_lossRcv += 1.0;
+        return;
+    }
+    const uint16_t diff = static_cast<uint16_t>(hopSeq - it->second);
+    if (diff == 0 || diff >= 0x8000)
+    {
+        return; // a repeat or an old, reordered frame
+    }
+    it->second = hopSeq;
+    m_lossRcv += 1.0;
+    if (diff <= params::channelaware::kMaxGap)
+    {
+        m_lossLost += diff - 1;   // the frames between were addressed to me and did not arrive
+    }
+}
+
+double
+ErgrEmhcRouting::AddressedLossRate() const
+{
+    const double total = m_lossRcv + m_lossLost;
+    return total >= 1.0 ? m_lossLost / total : 0.0;
+}
+
 void
 ErgrEmhcRouting::OnData(const ErgrDataHeader& hdr)
 {
+    if (m_channelAware)
+    {
+        NoteAddressedData(hdr.senderId, hdr.hopSeq);
+    }
     E2EKey key{hdr.sourceId, hdr.sourceSeq};
     m_metrics->OnHopReceived(hdr.senderId, m_id, hdr.hopSeq);
     m_metrics->OnDataDelivered(E2EKey{hdr.sourceId, hdr.sourceSeq}, hdr.senderId, m_id); // ground truth, logging only

@@ -42,7 +42,7 @@ struct E2EKey
 };
 
 /// Largest feature vector supported (9 + optional onward feature, K§2.3).
-constexpr int kMaxFeatureDim = 10;
+constexpr int kMaxFeatureDim = 11;
 
 /// What the selector may know when it decides (never ground truth, K§0 rule 7).
 struct PacketCtx
@@ -58,6 +58,8 @@ struct PacketCtx
     double myBattery = 1.0;    ///< own residual energy fraction
     double myEnergyJ = 0.0;
     uint32_t dataBytes = 0;    ///< frame size, for airtime / PER
+    bool hasMyNoise = false;   ///< ChannelAwareBeacons: the node's own smoothed ambient noise estimate
+    double myNoiseDb = 0.0;    ///< ... in dB (band noise level), the noise embedded in a beacon SNR it measured
 };
 
 /// One eligible forwarder. 'nb' points into the neighbour table and is valid only during Select().

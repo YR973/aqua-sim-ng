@@ -40,6 +40,9 @@ struct NeighbourEntry
     double advertisedQ = 0.0; ///< that value
     double lastSnrDb = 0.0;   ///< measured SNR of its last beacon (MarginFromRssi, K§2.3)
     bool hasSnr = false;
+    bool hasChannel = false;  ///< ChannelAwareBeacons: the node advertised its noise and its addressed-frame loss rate
+    double noiseDb = 0.0;     ///< its smoothed ambient noise (dB, band noise level)
+    double lossRate = 0.0;    ///< pooled loss rate of DATA frames addressed to it (0..1)
 
     /// Position extrapolated to 'now' with the advertised velocity (spec §8.1).
     Vector PredictedPos(Time now) const

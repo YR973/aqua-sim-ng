@@ -189,13 +189,13 @@ ErgrBeaconHeader::ReceiptBytes() const
 uint32_t
 ErgrBeaconHeader::BlobBytes() const
 {
-    return hasBlob ? 4 * ModelBlob::kDim : 0; // int16 theta + uint16 diag per dimension
+    return hasBlob ? 4u * blob.dim : 0; // int16 theta + uint16 diag per dimension
 }
 
 uint32_t
 ErgrBeaconHeader::GetSerializedSize() const
 {
-    return BaseBytes() + ReceiptBytes() + BlobBytes() + QBytes();
+    return BaseBytes() + ReceiptBytes() + BlobBytes() + QBytes() + ChannelBytes();
 }
 
 void
@@ -218,7 +218,7 @@ ErgrBeaconHeader::Serialize(Buffer::Iterator i) const
     i.WriteU8(queueLen);
     i.WriteHtonU16(nextBeaconDs);
     i.WriteU8(static_cast<uint8_t>(receipts.size()));
-    i.WriteU8(static_cast<uint8_t>((hasBlob ? 1 : 0) | (hasQ ? 2 : 0))); // flag byte: bit0 blob, bit1 Q value
+    i.WriteU8(static_cast<uint8_t>((hasBlob ? 1 : 0) | (hasQ ? 2 : 0) | (hasChannel ? 4 : 0) | ((hasBlob && blob.dim > 9) ? 8 : 0))); // flag byte: bit0 blob, bit1 Q value, bit2 channel fields, bit3 blob of 11 dimensions
     for (const ReceiptEntry& r : receipts)
     {
         i.WriteHtonU16(r.senderId);
@@ -227,11 +227,11 @@ ErgrBeaconHeader::Serialize(Buffer::Iterator i) const
     }
     if (hasBlob)
     {
-        for (int k = 0; k < ModelBlob::kDim; ++k)
+        for (int k = 0; k < blob.dim; ++k)
         {
             i.WriteHtonU16(static_cast<uint16_t>(blob.theta[k]));
         }
-        for (int k = 0; k < ModelBlob::kDim; ++k)
+        for (int k = 0; k < blob.dim; ++k)
         {
             i.WriteHtonU16(blob.diagA[k]);
         }
@@ -239,6 +239,11 @@ ErgrBeaconHeader::Serialize(Buffer::Iterator i) const
     if (hasQ)
     {
         i.WriteHtonU16(static_cast<uint16_t>(qValue));
+    }
+    if (hasChannel)
+    {
+        i.WriteU8(noiseQ);
+        i.WriteU8(lossQ);
     }
 }
 
@@ -265,6 +270,8 @@ ErgrBeaconHeader::Deserialize(Buffer::Iterator i)
     uint8_t flags = i.ReadU8();
     hasBlob = (flags & 1) != 0;
     hasQ = (flags & 2) != 0;
+    hasChannel = (flags & 4) != 0;
+    blob.dim = (flags & 8) ? 11 : 9;
     receipts.clear();
     for (uint8_t n = 0; n < nReceipts; ++n)
     {
@@ -276,11 +283,11 @@ ErgrBeaconHeader::Deserialize(Buffer::Iterator i)
     }
     if (hasBlob)
     {
-        for (int k = 0; k < ModelBlob::kDim; ++k)
+        for (int k = 0; k < blob.dim; ++k)
         {
             blob.theta[k] = static_cast<int16_t>(i.ReadNtohU16());
         }
-        for (int k = 0; k < ModelBlob::kDim; ++k)
+        for (int k = 0; k < blob.dim; ++k)
         {
             blob.diagA[k] = i.ReadNtohU16();
         }
@@ -288,6 +295,11 @@ ErgrBeaconHeader::Deserialize(Buffer::Iterator i)
     if (hasQ)
     {
         qValue = static_cast<int16_t>(i.ReadNtohU16());
+    }
+    if (hasChannel)
+    {
+        noiseQ = i.ReadU8();
+        lossQ = i.ReadU8();
     }
     return GetSerializedSize();
 }
@@ -361,7 +373,7 @@ ErgrHandoverHeader::GetTypeId()
 uint32_t
 ErgrHandoverHeader::GetSerializedSize() const
 {
-    return 1 + 2 + 2 + 2 + 2 * kDim + 2 * kDim + 2 * kOffDiag; // 115
+    return 1 + 2 + 2 + 2 + 4u * dim + dim * (dim - 1u); // 115 for 9 dimensions, 161 for 11
 }
 
 void
@@ -370,18 +382,18 @@ ErgrHandoverHeader::Serialize(Buffer::Iterator i) const
     i.WriteU8(static_cast<uint8_t>(FrameType::Handover));
     i.WriteHtonU16(fromId);
     i.WriteHtonU16(toId);
-    i.WriteHtonU16(cellId);
-    for (int16_t t : theta)
+    i.WriteHtonU16(static_cast<uint16_t>((cellId & 0x7fff) | (dim > 9 ? 0x8000 : 0)));
+    for (int k = 0; k < dim; ++k)
     {
-        i.WriteHtonU16(static_cast<uint16_t>(t));
+        i.WriteHtonU16(static_cast<uint16_t>(theta[k]));
     }
-    for (uint16_t d : diag)
+    for (int k = 0; k < dim; ++k)
     {
-        i.WriteHtonU16(d);
+        i.WriteHtonU16(diag[k]);
     }
-    for (int16_t o : offDiag)
+    for (int k = 0; k < dim * (dim - 1) / 2; ++k)
     {
-        i.WriteHtonU16(static_cast<uint16_t>(o));
+        i.WriteHtonU16(static_cast<uint16_t>(offDiag[k]));
     }
 }
 
@@ -391,18 +403,20 @@ ErgrHandoverHeader::Deserialize(Buffer::Iterator i)
     i.ReadU8();
     fromId = i.ReadNtohU16();
     toId = i.ReadNtohU16();
-    cellId = i.ReadNtohU16();
-    for (int16_t& t : theta)
+    const uint16_t cellAndDim = i.ReadNtohU16();
+    cellId = cellAndDim & 0x7fff;
+    dim = (cellAndDim & 0x8000) ? 11 : 9;
+    for (int k = 0; k < dim; ++k)
     {
-        t = static_cast<int16_t>(i.ReadNtohU16());
+        theta[k] = static_cast<int16_t>(i.ReadNtohU16());
     }
-    for (uint16_t& d : diag)
+    for (int k = 0; k < dim; ++k)
     {
-        d = i.ReadNtohU16();
+        diag[k] = i.ReadNtohU16();
     }
-    for (int16_t& o : offDiag)
+    for (int k = 0; k < dim * (dim - 1) / 2; ++k)
     {
-        o = static_cast<int16_t>(i.ReadNtohU16());
+        offDiag[k] = static_cast<int16_t>(i.ReadNtohU16());
     }
     return GetSerializedSize();
 }

@@ -309,7 +309,24 @@ constexpr int kClosingSpeed = 6; // x7
 constexpr int kSnrMargin = 7;    // x8
 constexpr int kIntercept = 8;    // x9
 constexpr int kBaseDim = 9;      // D without the optional onward feature
+constexpr int kNoiseMargin = 9;  // x10 (7 Nov 2026): x8's margin corrected by the candidate's advertised noise (ChannelAwareBeacons)
+constexpr int kLossRate = 10;    // x11: the candidate's advertised loss rate of addressed DATA frames
+constexpr int kFullDim = 11;     // D with x10 and x11
 } // namespace feature
+
+// ------------------------------------------------- channel-aware beacons ----
+// 7 Nov 2026 (user request, Step A): heads (and sinks) advertise the ambient noise they measure at their own position and the loss rate of
+// the DATA frames addressed to them, 1 byte each. Off by default.
+namespace channelaware
+{
+constexpr bool kEnabled = false;          // [DECIDED 7 Nov 2026] ChannelAwareBeacons
+constexpr double kNoiseTauS = 30.0;       // [DECIDED 7 Nov 2026] EWMA time constant of the noise estimate
+constexpr double kNoiseSamplePeriodS = 5.0; // [CONFIRM] how often a node samples its noise (a modem measures between frames)
+constexpr double kNoiseRefDb = 20.0;      // [DESIGN] byte 0 = this level (dB, band noise level); 0.5 dB steps => covers 20..147.5 dB
+constexpr double kNoiseStepDb = 0.5;      // [DECIDED 7 Nov 2026]
+constexpr double kLossTauS = 300.0;       // [CONFIRM] time constant of the pooled addressed-frame loss rate (a head receives a frame every few seconds at best)
+constexpr int kMaxGap = 8;                // [CONFIRM] a hopSeq jump larger than this is a resynchronisation, not 'k frames lost'
+} // namespace channelaware
 
 // ------------------------------------------------------------- logging ----
 namespace logging

@@ -2411,6 +2411,189 @@ class ThompsonDisagreeGateAsksOnlyWhenTheChoiceIsUncertain : public TestCase
     }
 };
 
+
+// ============================================ 7 Nov 2026, Step A: channel-aware beacons ===
+
+class ChannelAwareHeadersRoundTrip : public TestCase
+{
+  public:
+    ChannelAwareHeadersRoundTrip()
+        : TestCase("R4-A: beacon channel fields (+2 B), 11-dimensional blob (44 B) and handover (161 B) round-trip; old sizes unchanged")
+    {
+    }
+
+  private:
+    template <typename H>
+    static H RoundTrip(const H& h)
+    {
+        Ptr<Packet> p = Create<Packet>(0);
+        p->AddHeader(h);
+        H back;
+        p->RemoveHeader(back);
+        return back;
+    }
+
+    void DoRun() override
+    {
+        ErgrBeaconHeader b;
+        b.nodeId = 7;
+        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u, "plain beacon");
+        b.hasChannel = true;
+        b.noiseQ = 187;
+        b.lossQ = 40;
+        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 27u, "+2 B for the channel fields");
+        ErgrBeaconHeader b2 = RoundTrip(b);
+        NS_TEST_ASSERT_MSG_EQ(b2.hasChannel, true, "flag");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.noiseQ), 187, "noise byte");
+        NS_TEST_ASSERT_MSG_EQ(int(b2.lossQ), 40, "loss byte");
+        b.hasBlob = true;
+        b.blob.dim = 11;
+        for (int i = 0; i < 11; ++i)
+        {
+            b.blob.theta[i] = static_cast<int16_t>(100 * i - 500);
+            b.blob.diagA[i] = static_cast<uint16_t>(7 * i);
+        }
+        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u + 44u + 2u, "11-dimensional blob = 44 B");
+        ErgrBeaconHeader b3 = RoundTrip(b);
+        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.dim), 11, "blob dimension");
+        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.theta[10]), 500, "theta[10]");
+        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.diagA[10]), 70, "diag[10]");
+        NS_TEST_ASSERT_MSG_EQ(int(b3.noiseQ), 187, "channel fields behind the blob");
+        b.blob.dim = 9;
+        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u + 36u + 2u, "9-dimensional blob = 36 B as before");
+        NS_TEST_ASSERT_MSG_EQ(int(RoundTrip(b).blob.dim), 9, "dimension 9 on the wire");
+
+        ErgrHandoverHeader h;
+        h.fromId = 1;
+        h.toId = 2;
+        h.cellId = 300;
+        NS_TEST_ASSERT_MSG_EQ(h.GetSerializedSize(), 115u, "handover of 9 dimensions is still 115 B");
+        h.dim = 11;
+        for (int i = 0; i < 11; ++i)
+        {
+            h.theta[i] = static_cast<int16_t>(i - 5);
+            h.diag[i] = static_cast<uint16_t>(1000 + i);
+        }
+        for (int k = 0; k < 55; ++k)
+        {
+            h.offDiag[k] = static_cast<int16_t>(k - 20);
+        }
+        NS_TEST_ASSERT_MSG_EQ(h.GetSerializedSize(), 161u, "handover of 11 dimensions = 161 B");
+        ErgrHandoverHeader h2 = RoundTrip(h);
+        NS_TEST_ASSERT_MSG_EQ(int(h2.dim), 11, "dimension");
+        NS_TEST_ASSERT_MSG_EQ(int(h2.cellId), 300, "cell id survives the dimension bit");
+        NS_TEST_ASSERT_MSG_EQ(int(h2.theta[10]), 5, "theta[10]");
+        NS_TEST_ASSERT_MSG_EQ(int(h2.offDiag[54]), 34, "last off-diagonal");
+    }
+};
+
+class NoiseCorrectedMarginAndFwNa : public TestCase
+{
+  public:
+    NoiseCorrectedMarginAndFwNa()
+        : TestCase("R4-A: x10 = x8 minus the candidate's excess noise (own noise embedded in a measured SNR); x11 = loss rate; FW-NA avoids the noisy head")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto link = std::make_shared<AcousticLinkModel>();
+        FeatureBuilder fb(link, true);
+        PacketCtx ctx = MakeCtx();
+        const double base = link->NoiseLevelDb();
+        NeighbourEntry nb = MakeNeighbour(21, link->SnrReqDb(ctx.dataBytes) + 10.0);
+        Time now = Seconds(1000);
+        auto x = fb.BuildFull(ctx, nb, 2, now);
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[9], x[7], 1e-12, "no advertisement: x10 = x8");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[10], 0.0, 1e-12, "no advertisement: x11 = 0");
+        nb.hasChannel = true;
+        nb.noiseDb = base;
+        nb.lossRate = 0.25;
+        ctx.hasMyNoise = true;
+        ctx.myNoiseDb = base;
+        x = fb.BuildFull(ctx, nb, 2, now);
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[9], x[7], 1e-12, "same noise as assumed: x10 = x8");
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[10], 0.25, 1e-12, "x11 = advertised loss rate");
+        nb.noiseDb = base + 6.0;   // the candidate sits in a noisy region: 6 dB less margin for data sent to it
+        x = fb.BuildFull(ctx, nb, 2, now);
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[9], x[7] - 6.0 / params::learner::kMarginScaleDb, 1e-9, "6 dB more noise at the candidate: x10 falls by 6/30");
+        ctx.myNoiseDb = base + 6.0; // ... but the measured beacon SNR already contained this node's own 6 dB
+        x = fb.BuildFull(ctx, nb, 2, now);
+        NS_TEST_ASSERT_MSG_EQ_TOL(x[9], x[7], 1e-9, "equal noise at both ends: nothing to correct");
+        FeatureBuilder model(link, false); // margin from the link model: the assumed noise is the model's own
+        ctx.myNoiseDb = base + 20.0;
+        auto xm = model.BuildFull(ctx, nb, 2, now);
+        NS_TEST_ASSERT_MSG_EQ_TOL(xm[9], xm[7] - 6.0 / params::learner::kMarginScaleDb, 1e-9, "model margin: correction against the link model's noise");
+
+        // FW against FW-NA: two candidates, the stronger one sits in a noisy region.
+        Ptr<SelectorFixedWeight> fw = MakeBaseline<SelectorFixedWeight>("ns3::cbergr::SelectorFixedWeight", "");
+        Ptr<SelectorFixedWeight> na = MakeBaseline<SelectorFixedWeight>("ns3::cbergr::SelectorFixedWeight", "NoiseAware=true");
+        PacketCtx c2 = MakeCtx();
+        c2.hasMyNoise = true;
+        c2.myNoiseDb = base;
+        const double req = link->SnrReqDb(c2.dataBytes);
+        NeighbourEntry strongNoisy = MakeNeighbour(31, req + 8.0);
+        strongNoisy.hasChannel = true;
+        strongNoisy.noiseDb = base + 15.0;
+        NeighbourEntry weakQuiet = MakeNeighbour(32, req + 3.0);
+        weakQuiet.hasChannel = true;
+        weakQuiet.noiseDb = base;
+        std::vector<Candidate> eligible = {{31, &strongNoisy}, {32, &weakQuiet}};
+        NS_TEST_ASSERT_MSG_EQ(int(fw->Select(c2, eligible, now).fwdId), 31, "FW sees only x8: the stronger beacon wins");
+        NS_TEST_ASSERT_MSG_EQ(int(na->Select(c2, eligible, now).fwdId), 32, "FW-NA subtracts the 15 dB of noise at 31 and takes 32");
+    }
+};
+
+class AddressedLossAndNoiseAreAdvertised : public TestCase
+{
+  public:
+    AddressedLossAndNoiseAreAdvertised()
+        : TestCase("R4-A: a head estimates its addressed-frame loss from hopSeq gaps and its noise, and the neighbour sees both on the beacon")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::ChannelAwareBeacons", BooleanValue(true));
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-chan";
+        RngSeedManager::SetSeed(12);
+        LineNetwork net(dir, "WithFeedback=true;AckRequest=true", 0.0);
+        auto link = std::make_shared<AcousticLinkModel>();
+        for (Ptr<ErgrEmhcRouting> r : {net.sink, net.relay, net.source})
+        {
+            r->SetLinkModel(link);
+        }
+        net.relay->SetNoiseMeter([]() { return 7.0; });   // the relay hears 7 dB more noise than the link model assumes
+        int seen = 0;
+        net.propagation->SetFrameFilter([&seen](uint32_t tx, uint32_t rx, uint8_t type) {
+            if (type != static_cast<uint8_t>(FrameType::Data) || tx != 2 || rx != 1)
+            {
+                return false;
+            }
+            return (++seen % 2) == 0; // every second DATA frame from the source to the relay is lost
+        });
+        net.Inject(30, 12.0);
+        net.RunAndFinish(900.0);
+        const double rate = net.relay->LossEstimate();
+        NS_TEST_ASSERT_MSG_EQ((rate > 0.25 && rate < 0.75), true, "about half of the frames addressed to the relay were missing: " << rate);
+        NS_TEST_ASSERT_MSG_EQ_TOL(net.relay->NoiseEstimateDb(), link->NoiseLevelDb() + 7.0, 0.3, "noise estimate = link model + 7 dB");
+        const NeighbourEntry* row = net.source->Table().Find(1);
+        NS_TEST_ASSERT_MSG_EQ((row != nullptr && row->hasChannel), true, "the source knows the relay's channel fields");
+        NS_TEST_ASSERT_MSG_EQ_TOL(row->noiseDb, link->NoiseLevelDb() + 7.0, 0.8, "advertised noise (0.5 dB steps, EWMA, 50 s old at most)");
+        NS_TEST_ASSERT_MSG_EQ((row->lossRate > 0.2 && row->lossRate < 0.8), true, "advertised loss rate " << row->lossRate);
+        const NeighbourEntry* sinkRow = net.source->Table().Find(0);
+        NS_TEST_ASSERT_MSG_EQ((sinkRow == nullptr || sinkRow->hasChannel == false || sinkRow->noiseDb > 0.0), true, "sinks advertise too (when heard)");
+        Simulator::Destroy();
+        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::ChannelAwareBeacons", BooleanValue(params::channelaware::kEnabled));
+        if (!std::getenv("CBERGR_KEEP"))
+        {
+            std::filesystem::remove_all(dir);
+        }
+    }
+};
+
 // LinQ (§11 B4): semi-gradient TD(0) on the CB features.
 class LinearQMovesItsWeightsTowardTheTarget : public TestCase
 {
@@ -2689,7 +2872,7 @@ class HandoverGivesTheNewHeadTheOldModel : public TestCase
                                       "unplanned: theta_" << i << " within quantisation");
             evidence += oldModel.OwnEvidenceDiag()[i];
         }
-        NS_TEST_ASSERT_MSG_EQ_TOL(taker->Model().TraceOwn(), 0.7 * (9.0 + evidence), 9.0 * 0.7 / 16.0 + 0.2,
+        NS_TEST_ASSERT_MSG_EQ_TOL(taker->Model().TraceOwn(), 0.7 * (11.0 + evidence), 9.0 * 0.7 / 16.0 + 0.2, // 11 = the model has 11 dimensions; the two unused ones sit at the prior
                                   "unplanned: A scaled by BetaHandover = 0.7");
         NS_TEST_ASSERT_MSG_EQ((taker->Model().TraceOwn() < newModel.TraceOwn()), true, "less confident than after a planned handover");
 
@@ -3507,6 +3690,9 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new ThompsonDisagreeGateAsksOnlyWhenTheChoiceIsUncertain, TestCase::QUICK);
         AddTestCase(new LossBudgetHopCountMatchesTruthUnderAloha, TestCase::QUICK);
         AddTestCase(new NoiseBurstAndCounterfactualLogAreConsistent, TestCase::QUICK);
+        AddTestCase(new ChannelAwareHeadersRoundTrip, TestCase::QUICK);
+        AddTestCase(new NoiseCorrectedMarginAndFwNa, TestCase::QUICK);
+        AddTestCase(new AddressedLossAndNoiseAreAdvertised, TestCase::QUICK);
     }
 };
 

@@ -28,7 +28,8 @@ Decision SelectByWeights(const FeatureBuilder& features,
                          bool requestAck,
                          const PacketCtx& pkt,
                          const std::vector<Candidate>& eligible,
-                         Time now);
+                         Time now,
+                         bool noiseAware = false);
 
 class SelectorFixedWeight : public ForwarderSelector
 {
@@ -47,6 +48,7 @@ class SelectorFixedWeight : public ForwarderSelector
     double m_kappaP;
     bool m_requestAck;
     bool m_marginFromRssi;
+    bool m_noiseAware = false;
 };
 
 /**
