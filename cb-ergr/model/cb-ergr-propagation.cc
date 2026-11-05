@@ -203,6 +203,13 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
     MacHeader macHeader;
     peek->RemoveHeader(macHeader);
     const uint8_t frameType = PeekFrameType(peek);
+    uint64_t dataId = 0;
+    if (frameType == static_cast<uint8_t>(FrameType::Data))
+    {
+        ErgrDataHeader dh;
+        peek->PeekHeader(dh);
+        dataId = (static_cast<uint64_t>(dh.sourceId) << 32) | (static_cast<uint64_t>(dh.sourceSeq) << 16) | dh.forwarderId;
+    }
     // Source level: the tagged power level if the routing layer set one (spec §4.2), otherwise the full level.
     double sourceLevelDb = m_link->SourceLevelDb(stamp.GetPt());
     TxPowerLevelTag levelTag;
@@ -246,7 +253,7 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
         {
             m_beaconSnr[(static_cast<uint64_t>(senderId) << 32) | receiverId] = snrDb;
         }
-        m_linkEval(senderId, receiverId, distanceM, snrDb, per, decodable, frameBytes, frameType);
+        m_linkEval(senderId, receiverId, distanceM, snrDb, per, decodable, frameBytes, frameType, dataId);
 
         PktRecvUnit unit;
         unit.recver = receiver;

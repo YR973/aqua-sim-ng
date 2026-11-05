@@ -155,6 +155,16 @@ constexpr int kMaxAttempts = 16;          // [CONFIRM] busy-channel deferrals be
 constexpr int kQueueLimit = 64;           // [CONFIRM] frames waiting in the MAC
 } // namespace mac
 
+// ----------------------------------------------------------- label policy ----
+// 7 Nov 2026 (user request, Step 1a/b): the ACK timeout no longer erases the attempt. The sender retries at the timeout as before,
+// but keeps a learning record until a late ACK or receipt bitmap arrives; at expiry an attempt with no evidence is CENSORED
+// (we do not know whether the frame arrived), not labelled 0. Censored labels are dropped by default.
+namespace feedback
+{
+constexpr bool kKeepRecordAfterTimeout = true; // [DECIDED 7 Nov 2026] false = the old behaviour (label 0 at the ACK timeout, record erased)
+constexpr bool kCensoredAsZero = false;        // [DECIDED 7 Nov 2026] false = a censored label is dropped; true = counted as 0 (old behaviour)
+} // namespace feedback
+
 // ----------------------------------------------------- head solicitation ----
 // E34 (6 Nov 2026): a member must always know the heads of its own cell. A member with no usable head row HOLDS its packet,
 // broadcasts a short SOLICIT (an election-kind frame, 9 B) and the heads of its cell answer with a beacon.
@@ -203,6 +213,7 @@ constexpr double kMu = 0.1;              // [SPEC] S§8.5
 constexpr double kKappa = 1.0;           // [SPEC] S§8.5 exponent of phi(e)
 constexpr double kBatteryFloor = 0.01;   // [SPEC] S§8.5 max(e, 0.01)
 constexpr double kAckWidthThreshold = 0.30; // [SPEC] S§8.6 TauW
+constexpr int kAckDisagreeDraws = 4;          // [DECIDED 7 Nov 2026] AckGate=ThompsonDisagree: M extra posterior samples per gated decision
 constexpr double kAckProbStdThreshold = 0.05; // [CONFIRM] ablation AckGate=ProbStd: ACK when p(1-p) width(x) exceeds this; tuned on training seeds
 constexpr double kAuditRate = 0.10;      // [SPEC] S§8.6 QAudit
 constexpr double kEntryAgeScaleS = 1000.0; // [SPEC] S§8.1

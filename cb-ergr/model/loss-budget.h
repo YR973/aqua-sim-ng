@@ -51,7 +51,11 @@ class LossBudget
 
     void OnDataKey(uint32_t sender, E2EKey key) { m_lastKey[sender] = key; }
     void OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t receiver, double nowS);
-    void OnLinkEval(uint32_t txNode, uint32_t rxNode, FrameType type, uint32_t bytes, double distM, bool decodable, double nowS);
+    /// 'dataId' (DATA frames only) = sourceId << 32 | sourceSeq << 16 | forwarderId, read from the frame header by the channel:
+    /// the transmission is bound to its attempt by identity (7 Nov 2026; the old per-sender FIFO lost its alignment whenever a
+    /// frame handed to the MAC never went on the air, which happened under Aloha).
+    void OnLinkEval(uint32_t txNode, uint32_t rxNode, FrameType type, uint32_t bytes, double distM, bool decodable, double nowS,
+                    uint64_t dataId = 0);
     void OnDataDelivered(E2EKey key, uint32_t sender, uint32_t fwd, double nowS);
 
     /// Classify every attempt; 'deathTimeS(node)' returns the battery death time or -1.
@@ -83,6 +87,7 @@ class LossBudget
         FrameType type;
         uint32_t tx;
         int64_t attempt; // index of the DATA attempt this frame belongs to, -1 for other frame types
+        bool ok = true;  // decodable at this receiver (a decodable frame also locks the receiver in RECV; an undecodable one only sets the collision flag)
     };
 
     void Classify(Attempt& a);
@@ -94,7 +99,6 @@ class LossBudget
     std::vector<Attempt> m_attempts;
     std::vector<size_t> m_pending;                                     // attempts not yet classified
     std::function<double(uint32_t)> m_deathTimeS;
-    std::map<uint32_t, std::deque<size_t>> m_unbound;                  // per sender: attempts handed to the MAC, not yet on the air
     std::map<uint32_t, std::pair<double, size_t>> m_bound;             // per sender: air start time -> attempt of that transmission
     std::map<std::tuple<uint16_t, uint16_t, uint32_t, uint32_t>, std::vector<size_t>> m_byKey; // (source, seq, sender, fwd) -> attempts
     std::map<uint32_t, std::deque<Arrival>> m_arrivals;                // per receiver, recent

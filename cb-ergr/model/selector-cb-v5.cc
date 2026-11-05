@@ -10,6 +10,7 @@
 #include "ns3/abort.h"
 #include "ns3/boolean.h"
 #include "ns3/double.h"
+#include "ns3/integer.h"
 #include "ns3/enum.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
@@ -86,7 +87,9 @@ SelectorCbV5::GetTypeId()
                           MakeBooleanAccessor(&SelectorCbV5::m_marginFromRssi), MakeBooleanChecker())
             .AddAttribute("AckGate", "Uncertainty used by the gated mode: Logit (spec width > TauW) or ProbStd (p(1-p) width > ProbStdThreshold).",
                           EnumValue(AckGate::Logit), MakeEnumAccessor<AckGate>(&SelectorCbV5::m_ackGate),
-                          MakeEnumChecker(AckGate::Logit, "Logit", AckGate::ProbStd, "ProbStd"))
+                          MakeEnumChecker(AckGate::Logit, "Logit", AckGate::ProbStd, "ProbStd", AckGate::ThompsonDisagree, "ThompsonDisagree"))
+            .AddAttribute("DisagreeDraws", "M: extra posterior samples of the ThompsonDisagree gate.", IntegerValue(params::learner::kAckDisagreeDraws),
+                          MakeIntegerAccessor(&SelectorCbV5::m_disagreeDraws), MakeIntegerChecker<int>(1, 64))
             .AddAttribute("ProbStdThreshold", "Threshold of the ProbStd ACK gate.", DoubleValue(params::learner::kAckProbStdThreshold),
                           MakeDoubleAccessor(&SelectorCbV5::m_probStdThreshold), MakeDoubleChecker<double>(0.0))
             .AddAttribute("AckMode", "When to request hop ACKs.", EnumValue(AckMode::Gated),
@@ -152,6 +155,7 @@ SelectorCbV5::SelectorCbV5()
       m_ackMode(AckMode::Gated),
       m_ackGate(AckGate::Logit),
       m_probStdThreshold(params::learner::kAckProbStdThreshold),
+      m_disagreeDraws(params::learner::kAckDisagreeDraws),
       m_lambdaInit(params::price::kLambdaInit),
       m_eta(params::price::kEta),
       m_targetLifetimeS(params::price::kTargetLifetimeS),
@@ -283,7 +287,7 @@ SelectorCbV5::Score(double pSuccess, const Features& x, double txEnergyJ, double
 }
 
 bool
-SelectorCbV5::NeedsAck(const PacketCtx& pkt, double width, double pMean)
+SelectorCbV5::NeedsAck(const PacketCtx& pkt, double width, double pMean, bool disagree)
 {
     if (m_ackMode == AckMode::Every)
     {
@@ -303,6 +307,10 @@ SelectorCbV5::NeedsAck(const PacketCtx& pkt, double width, double pMean)
     {
         const double p = (pMean < 0.0) ? 0.5 : pMean;
         unsure = p * (1.0 - p) * width > m_probStdThreshold; // delta-method std of the success probability
+    }
+    if (m_ackGate == AckGate::ThompsonDisagree)
+    {
+        unsure = disagree;
     }
     const bool audit = m_uniform->GetValue() < m_qAudit;             // unbiased sample of labels
     return unsure || priority || audit;
@@ -381,7 +389,33 @@ SelectorCbV5::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligibl
     best.width = m_model.Width(chosen->x);
     best.score = chosen->score;
     best.lambdaE = (m_enableLifetime && m_price) ? m_price->Lambda() : 0.0;
-    best.ackRequest = NeedsAck(pkt, best.width, chosen->pMean);
+    bool disagree = false;
+    if (m_ackGate == AckGate::ThompsonDisagree && m_ackMode == AckMode::Gated && pkt.attempt == 1)
+    {
+        // M extra posterior samples: would any of them have chosen another option? (decision-relevant uncertainty)
+        for (int m = 0; m < m_disagreeDraws && !disagree; ++m)
+        {
+            Features zm;
+            for (int i = 0; i < kDim; ++i)
+            {
+                zm[i] = m_normal->GetValue();
+            }
+            const Features th = m_model.SampleTheta(zm);
+            const Option* top = nullptr;
+            double topScore = 0.0;
+            for (const Option& o : options)
+            {
+                const double s = Score(Sigmoid(th.Dot(o.x)), o.x, o.txEnergyJ, o.cand->nb->battery);
+                if (!top || s > topScore + 1e-12 || (std::fabs(s - topScore) <= 1e-12 && o.cand->id < top->cand->id))
+                {
+                    top = &o;
+                    topScore = s;
+                }
+            }
+            disagree = (top->cand->id != chosen->cand->id || top->level != chosen->level);
+        }
+    }
+    best.ackRequest = NeedsAck(pkt, best.width, chosen->pMean, disagree);
     best.valid = true;
     // Rank of the chosen option by its mean success among the options at the chosen level (1 = best mean).
     int rank = 1;

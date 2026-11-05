@@ -34,6 +34,8 @@ SelectorLfaQ::GetTypeId()
                           MakeDoubleAccessor(&SelectorLfaQ::m_epsilon), MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("StepCost", "Cost subtracted from the 0/1 reward.", DoubleValue(params::selector::kQlStepCost),
                           MakeDoubleAccessor(&SelectorLfaQ::m_stepCost), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("Legacy", "Old target (y - StepCost) + Gamma * V_j (LinQ legacy).",
+                          BooleanValue(false), MakeBooleanAccessor(&SelectorLfaQ::m_legacy), MakeBooleanChecker())
             .AddAttribute("MarginFromRssi", "Use the measured beacon SNR for the margin feature.",
                           BooleanValue(params::learner::kMarginFromRssi),
                           MakeBooleanAccessor(&SelectorLfaQ::m_marginFromRssi), MakeBooleanChecker());
@@ -101,7 +103,14 @@ SelectorLfaQ::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligibl
     }
     d.score = qs[chosenIndex];
     d.pMean = std::max(0.0, std::min(1.0, qs[chosenIndex]));
-    d.aux = (c.nb->isSink || !c.nb->hasQ) ? 0.0 : c.nb->advertisedQ;
+    if (m_legacy)
+    {
+        d.aux = (c.nb->isSink || !c.nb->hasQ) ? 0.0 : c.nb->advertisedQ;
+    }
+    else
+    {
+        d.aux = c.nb->isSink ? 1.0 : (c.nb->hasQ ? m_gamma * c.nb->advertisedQ : 0.0); // value of a successful hop
+    }
     d.numCandidates = static_cast<uint8_t>(eligible.size());
     d.chosenRank = 1;
     d.valid = true;
@@ -117,7 +126,8 @@ SelectorLfaQ::OnLabel(const Decision& d, int y, LabelSource src, Time now)
     {
         x[i] = d.x[i];
     }
-    const double target = (static_cast<double>(y) - m_stepCost) + m_gamma * d.aux;
+    const double target = m_legacy ? (static_cast<double>(y) - m_stepCost) + m_gamma * d.aux
+                                   : (y ? d.aux : m_gamma * m_valueSelf); // failure: stays at i, bootstrap from V_i
     const double error = target - m_w.Dot(x);
     m_w.AddScaled(x, m_step * error);
 }

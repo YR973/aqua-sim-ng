@@ -32,10 +32,11 @@ OnLinkEval(Ptr<MetricsCollector> metrics,
            double per,
            bool ok,
            uint32_t bytes,
-           uint8_t frameType)
+           uint8_t frameType,
+           uint64_t dataId)
 {
     metrics->OnLinkEval(txNode, rxNode, static_cast<FrameType>(frameType), bytes, distM, snrDb, ok,
-                        RxFailReason::PerLoss);
+                        RxFailReason::PerLoss, dataId);
 }
 
 void

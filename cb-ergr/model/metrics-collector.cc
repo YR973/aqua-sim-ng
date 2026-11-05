@@ -229,7 +229,8 @@ MetricsCollector::OnLinkEval(uint32_t txNode,
                              double distM,
                              double snrDb,
                              bool ok,
-                             RxFailReason reason)
+                             RxFailReason reason,
+                             uint64_t dataId)
 {
     if (m_cfg.logFrames && m_framesFile.is_open() && !ok)
     {
@@ -237,7 +238,7 @@ MetricsCollector::OnLinkEval(uint32_t txNode,
                      << ',' << rxNode << ',' << bytes << ",," << distM << ',' << snrDb << ','
                      << RxFailReasonName(reason) << '\n';
     }
-    m_loss.OnLinkEval(txNode, rxNode, type, bytes, distM, ok, NowS());
+    m_loss.OnLinkEval(txNode, rxNode, type, bytes, distM, ok, NowS(), dataId);
     if (type == FrameType::Data)
     {
         SnrStats& snr = m_linkSnr[{txNode, rxNode}];
@@ -449,6 +450,15 @@ MetricsCollector::OnLabel(uint32_t node,
     }
     const int src = static_cast<int>(source);
     NodeStats& n = Node(node);
+    if (label < 0)
+    {
+        // Censored: no label reaches the learner. Count it, and how many had in fact arrived (logging only).
+        n.labelsBySource[src]++;
+        m_labelsBySource[src]++;
+        m_censored++;
+        m_censoredReceived += truth ? 1 : 0;
+        return;
+    }
     n.labelsBySource[src]++;
     n.labelsByValue[label]++;
     n.labelDelaySumS += delayS;
@@ -465,6 +475,24 @@ MetricsCollector::OnLabel(uint32_t node,
         m_labelZeros++;
         m_falseNegatives += truth ? 1 : 0;   // label 0 although the forwarder did get the frame
     }
+}
+
+void
+MetricsCollector::OnPendingSize(size_t n)
+{
+    m_peakPending = std::max<uint64_t>(m_peakPending, n);
+}
+
+void
+MetricsCollector::OnAckTimeoutFired(uint32_t node, uint16_t fwd, uint16_t hopSeq)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    Node(node).ackTimeouts++;
+    m_timeoutsFired++;
+    m_timeoutsFalse += HopWasReceived(node, fwd, hopSeq) ? 1 : 0;
 }
 
 void
@@ -528,7 +556,7 @@ MetricsCollector::WriteDecisionLine(uint32_t node,
     {
         return;
     }
-    static const char* names[] = {"ACK", "ACK_TIMEOUT", "BITMAP", "EXPIRY", "VOID"};
+    static const char* names[] = {"ACK", "ACK_TIMEOUT", "BITMAP", "EXPIRY", "VOID", "CENSORED"};
     m_decisionsFile << NowS() - delayS << ',' << node << ',' << fwd << ',' << d.fwdCell << ',' << hopSeq << ',' << int(d.powerLevel) << ','
                     << int(attempt) << ',' << ar << ',' << learn << ',' << int(d.numCandidates) << ','
                     << int(d.chosenRank);
@@ -886,10 +914,11 @@ MetricsCollector::WriteSummary()
          "energy_tx_j,energy_rx_j,energy_idle_j,rx_energy_share,fnd_s,hnd_s,jain_residual_energy,"
          "elections_per_hour,head_tenure_mean_s,attempts_total,retx_per_delivered,hop_success_truth,"
          "ar_rate,labels_total,label_ack_frac,label_acktimeout_frac,label_bitmap_frac,label_expiry_frac,"
-         "label_void_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels,"
+         "label_void_frac,label_censored_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels,"
          "decisions_scored,regret_mean,regret_mean_multi_viable,share_multi_viable";
     const FrameType energyTypes[] = {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election,
                                      FrameType::Handover, FrameType::Nack};
+    f << ",censored_labels,censored_received,ack_timeouts_fired,ack_timeouts_false,peak_pending_attempts";
     f << ",mac_drops,mac_deferrals,solicits_sent,solicits_answered,nohead_giveups,nohead_giveups_cell_had_head,cells_with_head_share,nodes_in_headless_cells_share";
     f << ",dead_declarations,dead_false_declarations,dead_by_quorum,dead_by_expiry,dead_heads_detected,dead_first_latency_mean_s";
     for (FrameType t : energyTypes)
@@ -948,6 +977,7 @@ MetricsCollector::WriteSummary()
     {
         firstLatencySum += entry.second;
     }
+    f << ',' << m_censored << ',' << m_censoredReceived << ',' << m_timeoutsFired << ',' << m_timeoutsFalse << ',' << m_peakPending;
     f << ',' << m_macDrops << ',' << m_macDeferrals << ',' << m_solicitsSent << ',' << m_solicitAnswered << ',' << m_noHeadGiveUps << ',' << m_noHeadGiveUpsWithHead
       << ',' << (m_covOccupied > 0 ? m_covHeaded / m_covOccupied : -1.0) << ',' << (m_covNodes > 0 ? m_covNodesHeadless / m_covNodes : -1.0);
     f << ',' << m_deadDeclarations << ',' << m_deadFalse << ',' << m_deadByQuorum << ',' << m_deadByExpiry << ','
@@ -995,7 +1025,7 @@ MetricsCollector::WriteNodes()
     }
     f << ",attempts,first_attempts,retransmissions,hop_success_first,hop_success_retry,hop_success_rate_truth,"
          "ar_requested,acks_sent,acks_received,ack_timeouts,labels_ack,labels_acktimeout,labels_bitmap,"
-         "labels_expiry,labels_void,labels_1,labels_0,label_delay_mean_s,duplicate_labels";
+         "labels_expiry,labels_void,labels_censored,labels_1,labels_0,label_delay_mean_s,duplicate_labels";
     f << '\n';
     for (const auto& entry : m_nodes)
     {
@@ -1038,7 +1068,7 @@ MetricsCollector::WriteLinks()
     std::ofstream f(m_cfg.outDir + "/links.csv");
     f << std::setprecision(8);
     f << "sender,forwarder,attempts,successes_truth,labels_1,labels_0,labels_ack,labels_acktimeout,"
-         "labels_bitmap,labels_expiry,labels_void,retransmissions,mean_distance_m,mean_snr_db,"
+         "labels_bitmap,labels_expiry,labels_void,labels_censored,retransmissions,mean_distance_m,mean_snr_db,"
          "mean_predicted_success,first_use_s,last_use_s\n";
     for (const auto& entry : m_links)
     {

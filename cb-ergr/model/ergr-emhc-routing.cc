@@ -18,6 +18,7 @@
 #include "ns3/double.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
+#include "ns3/string.h"
 #include "ns3/uinteger.h"
 
 #include <algorithm>
@@ -124,6 +125,12 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("RetriesAlwaysAck", "Retries always request an ACK (spec §9.12).",
                           BooleanValue(params::timers::kRetriesAlwaysAck),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_retriesAlwaysAck), MakeBooleanChecker())
+            .AddAttribute("KeepRecordAfterTimeout", "Keep the learning record after an ACK timeout so a late ACK or bitmap can label it (false = old rule).",
+                          BooleanValue(params::feedback::kKeepRecordAfterTimeout),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_keepRecord), MakeBooleanChecker())
+            .AddAttribute("CensoredLabels", "Attempts with no evidence by expiry: Drop (not shown to the learner) or Zero (counted as 0, old rule).",
+                          StringValue(params::feedback::kCensoredAsZero ? "Zero" : "Drop"),
+                          MakeStringAccessor(&ErgrEmhcRouting::m_censoredPolicy), MakeStringChecker())
             .AddAttribute("ExpiryBeacons", "Label expiry (MExpiry) in beacon periods.",
                           DoubleValue(params::timers::kExpiryBeacons),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_expiryBeacons), MakeDoubleChecker<double>(1.0))
@@ -364,6 +371,8 @@ ErgrEmhcRouting::Start()
         fc.maxTx = m_maxTx;
         fc.expiryS = m_expiryBeacons * m_beaconPeriodS;
         fc.receiptKeepS = m_receiptKeepBeacons * m_beaconPeriodS;
+        fc.keepRecordAfterTimeout = m_keepRecord;
+        fc.censoredAsZero = (m_censoredPolicy == "Zero");
         FeedbackManager::Hooks hooks;
         hooks.retry = [this](const HeldPacket& held) {
             if (!IsAlive())

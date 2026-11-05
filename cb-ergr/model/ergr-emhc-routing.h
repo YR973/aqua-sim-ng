@@ -181,6 +181,8 @@ class ErgrEmhcRouting : public AquaSimRouting
     double m_ackProcS, m_ackGuardS, m_phyRxDelayAirtimes;
     bool m_retriesAlwaysAck, m_autoElection;
     double m_expiryBeacons, m_receiptKeepBeacons;
+    bool m_keepRecord = true;
+    std::string m_censoredPolicy = "Drop";
     int m_suspectTimeouts;
     bool m_leanBeacons;
     double m_trickleMaxFactor, m_preElectionLeadS;

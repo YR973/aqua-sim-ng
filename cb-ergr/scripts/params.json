@@ -41,6 +41,10 @@
   "kQueue": 5,
   "kSnrMargin": 7
  },
+ "feedback": {
+  "kCensoredAsZero": false,
+  "kKeepRecordAfterTimeout": true
+ },
  "grid": {
   "kBoxSizeM": 3000.0,
   "kCellSizeM": 750.0,
@@ -51,6 +55,7 @@
   "kStrictProgress": true
  },
  "learner": {
+  "kAckDisagreeDraws": 4,
   "kAckProbStdThreshold": 0.05,
   "kAckWidthThreshold": 0.3,
   "kAuditRate": 0.1,

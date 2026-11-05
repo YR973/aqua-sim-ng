@@ -38,6 +38,7 @@ class SelectorLfaQ : public ForwarderSelector
 
   private:
     double m_step, m_gamma, m_epsilon, m_stepCost;
+    bool m_legacy = false;
     bool m_marginFromRssi;
     Vec<9> m_w;
     double m_valueSelf = 0.0;

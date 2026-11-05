@@ -41,6 +41,8 @@ FeedbackManager::Track(const PendingAttempt& attempt, const HeldPacket& packet, 
     }
     pa.expiryTimer = Simulator::Schedule(Seconds(m_cfg.expiryS), &FeedbackManager::OnExpiry, this, pa.hop);
     m_pending[pa.hop] = pa;
+    m_peakPending = std::max(m_peakPending, m_pending.size());
+    m_metrics->OnPendingSize(m_pending.size());
     m_buffer[packet.key] = packet;
 }
 
@@ -60,12 +62,17 @@ FeedbackManager::Resolve(const HopKey& key, int y, LabelSource src)
     pa.ackTimer.Cancel();
     pa.expiryTimer.Cancel();
 
+    if (y < 0 && m_cfg.censoredAsZero)
+    {
+        y = 0; // old behaviour: "no evidence" is counted as a failure
+        src = LabelSource::Expiry;
+    }
     double delayS = (Simulator::Now() - pa.sentAt).GetSeconds();
     m_metrics->OnLabel(m_cfg.myId, key.fwdId, key.hopSeq, y, src, delayS, pa.attempt, pa.ackRequested, pa.learn,
                        pa.decision);
-    if (pa.learn)
+    if (pa.learn && y >= 0)
     {
-        m_selector->OnLabel(pa.decision, y, src, Simulator::Now());
+        m_selector->OnLabel(pa.decision, y, src, Simulator::Now()); // a censored label is never shown to the learner
     }
     if (y == 1)
     {
@@ -97,8 +104,21 @@ FeedbackManager::OnAckTimeout(HopKey key)
         return;
     }
     E2EKey pkt = it->second.pkt;
-    // K§2.3 / D§3 P8: a timed-out ACK is label 0 at once (it stays a candidate for a late bitmap, but the label is fixed).
-    Resolve(key, 0, LabelSource::AckTimeout);
+    if (!m_cfg.keepRecordAfterTimeout)
+    {
+        // Old rule (K§2.3 / D§3 P8): a timed-out ACK is label 0 at once and the record is erased.
+        Resolve(key, 0, LabelSource::AckTimeout);
+        RetryOrDrop(pkt);
+        return;
+    }
+    // New rule (7 Nov 2026): the retry starts now, but the record stays so that a late ACK or bitmap can still label the attempt;
+    // if nothing arrives by expiry the label is censored.
+    it->second.timedOut = true;
+    m_metrics->OnAckTimeoutFired(m_cfg.myId, key.fwdId, key.hopSeq);
+    if (m_hooks.forwarderTimedOut)
+    {
+        m_hooks.forwarderTimedOut(key.fwdId);
+    }
     RetryOrDrop(pkt);
 }
 
@@ -111,9 +131,9 @@ FeedbackManager::OnExpiry(HopKey key)
         return;
     }
     E2EKey pkt = it->second.pkt;
-    bool hadAck = it->second.ackRequested;
-    Resolve(key, 0, LabelSource::Expiry);
-    if (!hadAck)
+    const bool retryStarted = it->second.ackRequested; // an AR attempt started its retry at the ACK timeout
+    Resolve(key, -1, LabelSource::Censored);          // nothing proved either outcome: censored (dropped unless CensoredLabels=Zero)
+    if (!retryStarted)
     {
         RetryOrDrop(pkt); // without an ACK request nothing else would have started a retry
     }
@@ -164,8 +184,12 @@ FeedbackManager::OnBeaconReceipts(const ErgrBeaconHeader& beacon)
         else if (status == ReceiptStatus::Missing)
         {
             E2EKey pkt = m_pending[key].pkt;
+            const bool retryStarted = m_pending[key].timedOut; // the ACK timer already started the retry
             Resolve(key, 0, LabelSource::Bitmap); // an explicit loss: the forwarder skipped this hopSeq
-            RetryOrDrop(pkt);
+            if (!retryStarted)
+            {
+                RetryOrDrop(pkt);
+            }
         }
     }
 }

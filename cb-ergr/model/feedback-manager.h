@@ -4,9 +4,11 @@
  * Every DATA attempt made through a feedback-using selector is recorded as a PendingAttempt, keyed by
  * (forwarder, hopSeq). It is resolved by exactly one of:
  *   - an ACK from the forwarder                    -> label 1  (source Ack)
- *   - the ACK timer firing (AR attempts only)      -> label 0  at once (K§2.3, D§3 P8) (source AckTimeout)
+ *   - the ACK timer firing (AR attempts only)      -> the retry starts; the record is KEPT (keepRecordAfterTimeout) so a late
+ *                                                     ACK or bitmap can still label it; with keepRecordAfterTimeout=false the old
+ *                                                     rule applies: label 0 at once (source AckTimeout)
  *   - a receipt bitmap on the forwarder's beacon   -> label 1 or an explicit 0 (source Bitmap)
- *   - the expiry timer                             -> label 0  (source Expiry)
+ *   - the expiry timer                             -> CENSORED (source Censored; label 0 only with censoredAsZero)
  *   - a void NACK from the forwarder               -> label 0  (source Void)
  * The first label for an attempt wins; later ones are counted as duplicate labels and ignored.
  * Ground truth (did the forwarder really get it?) is recorded by the metrics collector for the CSVs
@@ -53,6 +55,7 @@ struct PendingAttempt
     Time sentAt;
     bool ackRequested = false;
     uint8_t attempt = 1;     ///< 1 for the first transmission of the packet at this node
+    bool timedOut = false;   ///< the ACK timer fired: the retry already started, the record waits for late evidence
     bool learn = true;       ///< false for member hand-offs: the label is logged but not given to the selector
     double predictedDistM = 0.0;
     EventId ackTimer;
@@ -69,6 +72,8 @@ class FeedbackManager
         int maxTx = 0;
         double expiryS = 0.0;            ///< MExpiry
         double receiptKeepS = 0.0;       ///< how long a sender stays in outgoing receipt lists
+        bool keepRecordAfterTimeout = true; ///< keep the learning record after an ACK timeout (late ACK / bitmap can still label it)
+        bool censoredAsZero = false;     ///< a censored attempt becomes label 0 (old behaviour) instead of being dropped
     };
 
     /// Callbacks into the routing layer (kept as functions so this class does not depend on it).
@@ -104,6 +109,9 @@ class FeedbackManager
 
     /// Number of attempts waiting for a label.
     size_t PendingCount() const { return m_pending.size(); }
+
+    /// Largest number of attempts that waited for a label at the same time.
+    size_t PeakPending() const { return m_peakPending; }
 
     /// Attempts still unresolved (for the end-of-run consistency check).
     size_t Unresolved() const { return m_pending.size(); }
@@ -141,6 +149,7 @@ class FeedbackManager
     std::map<E2EKey, HeldPacket> m_buffer;
     std::map<uint16_t, ReceiptState> m_receipts;
     uint64_t m_duplicateLabels = 0;
+    size_t m_peakPending = 0;
 };
 
 } // namespace cbergr

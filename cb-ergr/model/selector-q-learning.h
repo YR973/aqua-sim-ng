@@ -5,6 +5,12 @@
  * epsilon-greedy exploration, ACK on every attempt (AckMode = Every), full power. Initial Q is 1 plus a bonus
  * for forwarders with a lower hop count than the sender. [CONFIRM C1: definition not yet checked against the
  * group's QL-ERGR-EMHC proposal]
+ *
+ * Since 7 Nov 2026 (Step 1c) the target is the discounted probability of reaching a sink:
+ *   reward 1 on arrival at a sink, 0 for every other hop (V_sink = 0, terminal);
+ *   success at a non-sink j: target = gamma * V_j;  failure: the packet stays at i, target = gamma * V_i.
+ * The initial Q is gamma^hmin_j. The old target (y - 0.1) + gamma * V_j credited a failed hop with V_j and let values grow with
+ * path length; it is kept as Legacy=true ("QlLegacy").
  */
 
 #ifndef CB_ERGR_SELECTOR_Q_LEARNING_H
@@ -41,6 +47,7 @@ class SelectorQLearning : public ForwarderSelector
 
   private:
     double m_alpha, m_gamma, m_epsilon, m_stepCost, m_hminBonus;
+    bool m_legacy = false;
     std::map<uint16_t, double> m_q;
     double m_valueSelf = 0.0;       ///< best Q seen at the last decision: what this node advertises
     Ptr<UniformRandomVariable> m_uniform;

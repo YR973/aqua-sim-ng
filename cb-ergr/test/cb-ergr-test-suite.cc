@@ -11,6 +11,7 @@
 #include "ns3/core-module.h"
 #include "ns3/cb-ergr-helper.h"
 #include "ns3/ergr-emhc-routing.h"
+#include "ns3/feedback-manager.h"
 #include "ns3/mobility-module.h"
 #include "ns3/oracle-evaluator.h"
 #include "ns3/selector-carp-ewma.h"
@@ -1318,17 +1319,20 @@ class ForcedLossGivesOneLabelPerAttempt : public TestCase
         RngSeedManager::SetSeed(5);
         LineNetwork net(dir, "WithFeedback=true;AckRequest=false", 0.30);
         net.Inject(80, 12.0);
-        net.RunAndFinish(1500.0); // 150 s expiry + beacon period after the last packet at 1148 s
+        net.RunAndFinish(1800.0); // three chained 150 s expiries (non-ACK attempts retry at expiry) after the last packet at 1148 s
 
-        // Every attempt got exactly one label (and none is still pending).
+        // Every attempt got exactly one outcome: a label from evidence (bitmap) or, with none by expiry, a CENSORED mark
+        // (7 Nov 2026: "no evidence" is not a 0).
         NS_TEST_ASSERT_MSG_EQ((net.metrics->TotalAttempts() > 80), true, "retries happened");
-        NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalLabels(), net.metrics->TotalAttempts(), "one label per attempt");
+        NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalLabels() + net.metrics->CensoredLabels(), net.metrics->TotalAttempts(),
+                              "one label (or censored mark) per attempt");
 
         std::vector<CsvRow> decisions = ReadCsv(dir + "/decisions.csv");
         std::set<std::string> hopSeqs;
         int bitmapOnes = 0, bitmapZeros = 0, expiry = 0, sourceRows = 0;
         for (const CsvRow& r : decisions)
         {
+            expiry += (r.at("label_source") == "CENSORED" && r.at("label") == "-1"); // every node
             if (r.at("node") != "2")
             {
                 continue;
@@ -1337,12 +1341,12 @@ class ForcedLossGivesOneLabelPerAttempt : public TestCase
             hopSeqs.insert(r.at("hop_seq"));
             bitmapOnes += (r.at("label_source") == "BITMAP" && r.at("label") == "1");
             bitmapZeros += (r.at("label_source") == "BITMAP" && r.at("label") == "0");
-            expiry += (r.at("label_source") == "EXPIRY");
         }
         NS_TEST_ASSERT_MSG_EQ(hopSeqs.size(), static_cast<size_t>(sourceRows), "every attempt has its own hopSeq");
         NS_TEST_ASSERT_MSG_EQ((bitmapOnes > 0), true, "bitmap labelled some attempts 1");
         NS_TEST_ASSERT_MSG_EQ((bitmapZeros > 0), true, "bitmap produced explicit 0s");
-        NS_TEST_ASSERT_MSG_EQ((expiry > 0), true, "silent attempts ended by expiry, not by success");
+        NS_TEST_ASSERT_MSG_EQ((expiry > 0), true, "silent attempts ended by expiry as censored, not as 0 and not as success");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint64_t>(expiry), net.metrics->CensoredLabels(), "every censored attempt is logged once");
 
         // No duplicate is forwarded downstream: the relay makes one first attempt per distinct packet it accepted.
         std::vector<CsvRow> nodes = ReadCsv(dir + "/nodes.csv");
@@ -1358,19 +1362,27 @@ class ForcedLossGivesOneLabelPerAttempt : public TestCase
     }
 };
 
-// Spec test 13 as changed by kickoff §2.3: when the ACK is lost, the timeout gives label 0 at once; the
-// retry (new hopSeq) is deduplicated at the relay, which ACKs it again.
+// Spec test 13 as changed by kickoff §2.3 and again on 7 Nov 2026: when the ACK is lost, the timeout starts the retry (new
+// hopSeq, deduplicated at the relay, which ACKs it again) but does NOT label the first attempt 0: its record is kept and, with
+// no late evidence by expiry, the label is censored. With KeepRecordAfterTimeout=false the old rule (label 0 at once) applies.
 class LostAckGivesTimeoutLabelAndDeduplicatedRetry : public TestCase
 {
   public:
     LostAckGivesTimeoutLabelAndDeduplicatedRetry()
-        : TestCase("D4 test13: lost ACK -> timeout label 0, retry deduplicated at the relay")
+        : TestCase("D4 test13: lost ACK -> retry at the timeout, label censored (or 0 under the old rule), retry deduplicated")
     {
     }
 
   private:
     void DoRun() override
     {
+        RunOnce(true);
+        RunOnce(false);
+    }
+
+    void RunOnce(bool keepRecord)
+    {
+        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::KeepRecordAfterTimeout", BooleanValue(keepRecord));
         std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-lostack";
         RngSeedManager::SetSeed(6);
         LineNetwork net(dir, "WithFeedback=true;AckRequest=true", 0.0);
@@ -1393,14 +1405,29 @@ class LostAckGivesTimeoutLabelAndDeduplicatedRetry : public TestCase
             }
         }
         NS_TEST_ASSERT_MSG_EQ(sourceRows.size(), 2u, "first attempt and one retry");
-        NS_TEST_ASSERT_MSG_EQ(sourceRows[0].at("label"), "0", "lost ACK: label 0");
-        NS_TEST_ASSERT_MSG_EQ(sourceRows[0].at("label_source"), "ACK_TIMEOUT", "from the ACK timer");
-        NS_TEST_ASSERT_MSG_EQ(sourceRows[0].at("truth_received"), "1", "the relay had received it (ground truth)");
-        NS_TEST_ASSERT_MSG_EQ(sourceRows[1].at("label"), "1", "retry acknowledged");
-        NS_TEST_ASSERT_MSG_EQ(sourceRows[1].at("label_source"), "ACK", "by an ACK");
-        NS_TEST_ASSERT_MSG_EQ((sourceRows[0].at("hop_seq") != sourceRows[1].at("hop_seq")), true, "fresh hopSeq");
-        NS_TEST_ASSERT_MSG_EQ(sourceRows[1].at("ar"), "1", "retries always ask for an ACK");
-        NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalFalseNegatives(), 1u, "one false negative");
+        const CsvRow& first = sourceRows[0].at("attempt") == "1" ? sourceRows[0] : sourceRows[1];
+        const CsvRow& retry = sourceRows[0].at("attempt") == "1" ? sourceRows[1] : sourceRows[0];
+        if (keepRecord)
+        {
+            // The relay's next beacon carries a receipt for the first hopSeq: the late bitmap corrects the would-be 0 to 1.
+            NS_TEST_ASSERT_MSG_EQ(first.at("label"), "1", "lost ACK: the late receipt bitmap labels the attempt 1");
+            NS_TEST_ASSERT_MSG_EQ(first.at("label_source"), "BITMAP", "late evidence");
+            NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalFalseNegatives(), 0u, "no false negative label was produced");
+            NS_TEST_ASSERT_MSG_EQ(net.metrics->CensoredLabels(), 0u, "nothing censored");
+            NS_TEST_ASSERT_MSG_EQ(net.metrics->TimeoutsFired(), 1u, "one ACK timeout fired");
+            NS_TEST_ASSERT_MSG_EQ(net.metrics->TimeoutsFalse(), 1u, "and it was a false timeout (the relay had the frame)");
+        }
+        else
+        {
+            NS_TEST_ASSERT_MSG_EQ(first.at("label"), "0", "old rule: label 0 at the ACK timeout");
+            NS_TEST_ASSERT_MSG_EQ(first.at("label_source"), "ACK_TIMEOUT", "from the ACK timer");
+            NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalFalseNegatives(), 1u, "one false negative");
+        }
+        NS_TEST_ASSERT_MSG_EQ(first.at("truth_received"), "1", "the relay had received it (ground truth)");
+        NS_TEST_ASSERT_MSG_EQ(retry.at("label"), "1", "retry acknowledged");
+        NS_TEST_ASSERT_MSG_EQ(retry.at("label_source"), "ACK", "by an ACK");
+        NS_TEST_ASSERT_MSG_EQ((first.at("hop_seq") != retry.at("hop_seq")), true, "fresh hopSeq");
+        NS_TEST_ASSERT_MSG_EQ(retry.at("ar"), "1", "retries always ask for an ACK");
 
         std::vector<CsvRow> nodes = ReadCsv(dir + "/nodes.csv");
         CsvRow relayRow = NodeRow(nodes, 1);
@@ -1408,6 +1435,296 @@ class LostAckGivesTimeoutLabelAndDeduplicatedRetry : public TestCase
         NS_TEST_ASSERT_MSG_EQ(relayRow.at("data_accepted"), "1", "forwarded once");
         NS_TEST_ASSERT_MSG_EQ(relayRow.at("acks_sent"), "2", "the duplicate is acknowledged too");
         NS_TEST_ASSERT_MSG_EQ(net.metrics->PacketsDelivered(), 1u, "delivered exactly once");
+        if (!std::getenv("CBERGR_KEEP"))
+        {
+            std::filesystem::remove_all(dir);
+        }
+        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::KeepRecordAfterTimeout", BooleanValue(params::feedback::kKeepRecordAfterTimeout));
+    }
+};
+
+
+// ================================================ 7 Nov 2026: label policy ===
+
+namespace
+{
+/// A selector that only records the labels it is shown.
+class RecordingSelector : public ForwarderSelector
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::cbergr::TestRecordingSelector").SetParent<ForwarderSelector>().AddConstructor<RecordingSelector>();
+        return tid;
+    }
+    Decision Select(const PacketCtx&, const std::vector<Candidate>&, Time) override { return Decision(); }
+    void OnLabel(const Decision& d, int y, LabelSource src, Time) override { labels.push_back({d.fwdId, y, src}); }
+    struct Seen
+    {
+        uint16_t fwd;
+        int y;
+        LabelSource src;
+    };
+    std::vector<Seen> labels;
+};
+
+/// Drives a FeedbackManager by hand: Track attempts, let the simulator run, deliver late evidence.
+struct FeedbackHarness
+{
+    Ptr<MetricsCollector> metrics = CreateObject<MetricsCollector>();
+    Ptr<RecordingSelector> selector = CreateObject<RecordingSelector>();
+    std::unique_ptr<FeedbackManager> fm;
+    int retries = 0, drops = 0, timedOut = 0;
+
+    FeedbackHarness(bool keep, bool censoredAsZero)
+    {
+        MetricsCollector::Config mc;
+        mc.outDir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-fm";
+        mc.simTimeS = 1.0e9;
+        metrics->Configure(mc);
+        FeedbackManager::Config fc;
+        fc.myId = 1;
+        fc.beaconPeriodS = 50.0;
+        fc.maxTx = 3;
+        fc.expiryS = 100.0;
+        fc.receiptKeepS = 150.0;
+        fc.keepRecordAfterTimeout = keep;
+        fc.censoredAsZero = censoredAsZero;
+        FeedbackManager::Hooks hooks;
+        hooks.retry = [this](const HeldPacket&) { retries++; };
+        hooks.drop = [this](const HeldPacket&, DropReason) { drops++; };
+        hooks.forwarderTimedOut = [this](uint16_t) { timedOut++; };
+        fm = std::make_unique<FeedbackManager>(fc, selector, metrics, hooks);
+    }
+
+    void Track(uint16_t fwd, uint16_t hopSeq, uint16_t seq, bool ar)
+    {
+        PendingAttempt pa;
+        pa.decision.fwdId = fwd;
+        pa.decision.valid = true;
+        pa.hop = HopKey{fwd, hopSeq};
+        pa.pkt = E2EKey{1, seq};
+        pa.ackRequested = ar;
+        HeldPacket held;
+        held.key = pa.pkt;
+        held.attempt = 1;
+        fm->Track(pa, held, 10.0);
+    }
+};
+} // namespace
+
+class AckTimeoutKeepsTheRecordAndExpiryCensors : public TestCase
+{
+  public:
+    AckTimeoutKeepsTheRecordAndExpiryCensors()
+        : TestCase("R3-1a,b: ACK timeout starts the retry but keeps the record; late ACK labels 1; no evidence -> censored")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        {   // (a) late ACK after the timeout still labels the attempt 1
+            FeedbackHarness h(true, false);
+            h.Track(5, 1, 1, true);
+            Simulator::Schedule(Seconds(12), [this, &h]() {
+                NS_TEST_ASSERT_MSG_EQ(h.retries, 1, "retry fired at the ACK timeout (10 s)");
+                NS_TEST_ASSERT_MSG_EQ(h.timedOut, 1, "suspect-tier hook fired");
+                NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 0u, "no label at the timeout");
+                NS_TEST_ASSERT_MSG_EQ(h.fm->PendingCount(), 1u, "the record is kept");
+            });
+            Simulator::Schedule(Seconds(20), [&h]() { h.fm->OnAck(5, 1); });
+            Simulator::Stop(Seconds(30));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 1u, "one label");
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels[0].y, 1, "late ACK corrects the would-be 0 to 1");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(h.selector->labels[0].src), static_cast<int>(LabelSource::Ack), "from the ACK");
+            NS_TEST_ASSERT_MSG_EQ(h.fm->PendingCount(), 0u, "resolved");
+            NS_TEST_ASSERT_MSG_EQ(h.retries, 1, "no second retry from the late ACK");
+            Simulator::Destroy();
+        }
+        {   // (a) no evidence by expiry -> censored: the learner sees nothing
+            FeedbackHarness h(true, false);
+            h.Track(5, 1, 1, true);
+            Simulator::Stop(Seconds(200));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 0u, "a censored label is not shown to the learner");
+            NS_TEST_ASSERT_MSG_EQ(h.metrics->CensoredLabels(), 1u, "but it is counted");
+            NS_TEST_ASSERT_MSG_EQ(h.fm->PendingCount(), 0u, "record freed");
+            NS_TEST_ASSERT_MSG_EQ(h.retries, 1, "the retry started at the ACK timeout; expiry does not start a second one");
+            Simulator::Destroy();
+        }
+        {   // CensoredLabels=Zero reproduces the old "no evidence is 0" at expiry
+            FeedbackHarness h(true, true);
+            h.Track(5, 1, 1, true);
+            Simulator::Stop(Seconds(200));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 1u, "counted as a label");
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels[0].y, 0, "label 0");
+            Simulator::Destroy();
+        }
+        {   // old rule: label 0 at the timeout, record erased, a late ACK is only a duplicate
+            FeedbackHarness h(false, true);
+            h.Track(5, 1, 1, true);
+            Simulator::Schedule(Seconds(20), [&h]() { h.fm->OnAck(5, 1); });
+            Simulator::Stop(Seconds(30));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 1u, "one label");
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels[0].y, 0, "label 0 at the timeout");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(h.selector->labels[0].src), static_cast<int>(LabelSource::AckTimeout), "ACK_TIMEOUT");
+            NS_TEST_ASSERT_MSG_EQ(h.fm->DuplicateLabels(), 1u, "the late ACK can no longer correct it");
+            Simulator::Destroy();
+        }
+        {   // (b) an attempt without an ACK request and without a receipt is censored at expiry (and then retried)
+            FeedbackHarness h(true, false);
+            h.Track(5, 1, 1, false);
+            Simulator::Stop(Seconds(150));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 0u, "no label");
+            NS_TEST_ASSERT_MSG_EQ(h.metrics->CensoredLabels(), 1u, "censored");
+            NS_TEST_ASSERT_MSG_EQ(h.retries, 1, "the retry starts at expiry");
+            Simulator::Destroy();
+        }
+    }
+};
+
+// Step 1e: the loss budget binds each transmission to its attempt by identity, also when the MAC drops frames (Aloha).
+class LossBudgetHopCountMatchesTruthUnderAloha : public TestCase
+{
+  public:
+    LossBudgetHopCountMatchesTruthUnderAloha()
+        : TestCase("R3-1e: loss-budget hop delivery equals ground-truth hop success under Aloha and Csma")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        for (const char* mac : {"Aloha", "Csma"})
+        {
+            std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-lb-" + mac;
+            ScenarioSettings s;
+            s.mac = mac;
+            s.outDir = dir;
+            s.seed = 11;
+            s.numNodes = 60;
+            s.simTimeS = 900;
+            s.warmupS = 300;
+            s.pktRateHz = 0.05;
+            s.currentSpeed = 0.0;
+            s.selector = "RoundRobin";
+            s.selectorAttributes = "WithFeedback=true";
+            ScenarioConfig config;
+            RegisterSettings(config, s);
+            RunScenario(s, config);
+            std::vector<CsvRow> summary = ReadCsv(dir + "/summary.csv");
+            std::vector<CsvRow> lb = ReadCsv(dir + "/loss_budget.csv");
+            double attempts = 0, delivered = 0;
+            for (const CsvRow& r : lb)
+            {
+                if (r.at("group") == "hop" && r.at("key") == "attempts")
+                {
+                    attempts = std::stod(r.at("value"));
+                }
+                if (r.at("group") == "hop" && r.at("key") == "delivered")
+                {
+                    delivered = std::stod(r.at("value"));
+                }
+            }
+            NS_TEST_ASSERT_MSG_EQ((attempts > 50), true, std::string("enough hops under ") + mac);
+            const double truth = std::stod(summary[0].at("hop_success_truth"));
+            NS_TEST_ASSERT_MSG_EQ_TOL(delivered / attempts, truth, 0.08, std::string("loss-budget hop success matches the truth under ") + mac);
+            if (!std::getenv("CBERGR_KEEP"))
+            {
+                std::filesystem::remove_all(dir);
+            }
+        }
+    }
+};
+// R3-1g: a node acts only on frames addressed to it (plus broadcast beacons / election frames). Frames for someone else change nothing.
+class FramesForOtherNodesChangeNothing : public TestCase
+{
+  public:
+    FramesForOtherNodesChangeNothing()
+        : TestCase("R3-1g: DATA, ACK, NACK and HANDOVER addressed to another node leave the receiver's state untouched")
+    {
+    }
+
+  private:
+    static double Fingerprint(const ErgrEmhcRouting& r)
+    {
+        double f = 0.0;
+        for (const auto& entry : r.Table().Rows())
+        {
+            const NeighbourEntry& row = entry.second;
+            f += row.id * 1.0 + row.lastSnrDb + row.beaconTime.GetSeconds() + row.pos.x + row.battery + row.hmin + (row.isHead ? 1 : 0);
+        }
+        return f + 1000.0 * r.Table().Size() + 7.0 * r.PendingCount() + (r.IsHead() ? 1.0 : 0.0) + r.Hmin();
+    }
+
+    static void Deliver(Ptr<ErgrEmhcRouting> to, Ptr<Packet> body)
+    {
+        AquaSimHeader ash;
+        ash.SetDirection(AquaSimHeader::UP);
+        ash.SetSize(body->GetSize());
+        body->AddHeader(ash);
+        to->Recv(body, Address(), 0);
+    }
+
+    void DoRun() override
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-overheard";
+        RngSeedManager::SetSeed(8);
+        LineNetwork net(dir, "WithFeedback=true;AckRequest=true", 0.0);
+        net.Inject(3, 10.0);
+        Simulator::Stop(Seconds(300.0));
+        Simulator::Run();
+        const double before = Fingerprint(*net.relay);
+        const size_t pendingBefore = net.source->Feedback() ? net.source->Feedback()->PendingCount() : 0;
+        const uint64_t labelsBefore = net.metrics->TotalLabels();
+        const uint64_t deliveredBefore = net.metrics->PacketsDelivered();
+
+        ErgrDataHeader data;       // from the source to somebody else (id 99), heard by the relay
+        data.senderId = 2;
+        data.forwarderId = 99;
+        data.sourceId = 2;
+        data.sourceSeq = 5000;
+        data.hpkt = 3;
+        data.hopSeq = 77;
+        data.SetFlags(true, false, 3);
+        Ptr<Packet> p1 = Create<Packet>(150);
+        p1->AddHeader(data);
+        Deliver(net.relay, p1);
+
+        ErgrAckHeader ack;          // an ACK for somebody else's DATA
+        ack.ackerId = 2;
+        ack.senderId = 99;
+        ack.hopSeq = 1;
+        Ptr<Packet> p2 = Create<Packet>(0);
+        p2->AddHeader(ack);
+        Deliver(net.source, p2);    // the source hears an ACK meant for node 99
+
+        ErgrNackHeader nack;        // a NACK for somebody else
+        nack.nackerId = 1;
+        nack.upstreamId = 99;
+        nack.sourceId = 2;
+        nack.sourceSeq = 1;
+        Ptr<Packet> p3 = Create<Packet>(0);
+        p3->AddHeader(nack);
+        Deliver(net.source, p3);
+
+        ErgrHandoverHeader ho;      // a handover to somebody else
+        ho.fromId = 2;
+        ho.toId = 99;
+        Ptr<Packet> p4 = Create<Packet>(0);
+        p4->AddHeader(ho);
+        Deliver(net.relay, p4);
+
+        NS_TEST_ASSERT_MSG_EQ_TOL(Fingerprint(*net.relay), before, 1e-9, "neighbour table, role and held packets unchanged");
+        NS_TEST_ASSERT_MSG_EQ((net.source->Feedback() ? net.source->Feedback()->PendingCount() : 0), pendingBefore, "no pending attempt resolved by a foreign ACK/NACK");
+        NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalLabels(), labelsBefore, "no label from a foreign ACK/NACK");
+        NS_TEST_ASSERT_MSG_EQ(net.metrics->PacketsDelivered(), deliveredBefore, "a foreign DATA frame is not forwarded or delivered");
+        Simulator::Destroy();
         if (!std::getenv("CBERGR_KEEP"))
         {
             std::filesystem::remove_all(dir);
@@ -1868,7 +2185,7 @@ class QLearningUpdatesAndAdvertisesItsValue : public TestCase
 {
   public:
     QLearningUpdatesAndAdvertisesItsValue()
-        : TestCase("D6: Q-learning update rule, terminal sink and beacon value (+2 B)")
+        : TestCase("D6: QlLegacy update rule, terminal sink and beacon value (+2 B)")
     {
     }
 
@@ -1876,7 +2193,7 @@ class QLearningUpdatesAndAdvertisesItsValue : public TestCase
     void DoRun() override
     {
         Ptr<SelectorQLearning> ql =
-            MakeBaseline<SelectorQLearning>("ns3::cbergr::SelectorQLearning", "Epsilon=0;Alpha=0.3;Gamma=0.8;StepCost=0.1");
+            MakeBaseline<SelectorQLearning>("ns3::cbergr::SelectorQLearning", "Epsilon=0;Alpha=0.3;Gamma=0.8;StepCost=0.1;Legacy=true");
         ql->AssignStreams(900);
         PacketCtx ctx = MakeCtx();
         NeighbourEntry relay = MakeNeighbour(31, 0.0);
@@ -1920,12 +2237,114 @@ class QLearningUpdatesAndAdvertisesItsValue : public TestCase
     }
 };
 
+// Step 1c: the Q-learning target.
+class QLearningTargetIsReachSinkProbability : public TestCase
+{
+  public:
+    QLearningTargetIsReachSinkProbability()
+        : TestCase("R3-1c: QL reward 1 at a sink, 0 per hop, failure bootstraps from V_i; QlLegacy keeps the old target")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorQLearning> ql = MakeBaseline<SelectorQLearning>("ns3::cbergr::SelectorQLearning", "Epsilon=0;Alpha=0.5;Gamma=0.8");
+        ql->AssignStreams(900);
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry relay = MakeNeighbour(31, 0.0);
+        relay.hasQ = true;
+        relay.advertisedQ = 0.5;
+        NeighbourEntry sink = MakeNeighbour(32, 0.0);
+        sink.isSink = true;
+        sink.hmin = 0;
+        std::vector<Candidate> eligible = {{31, &relay}, {32, &sink}};
+        Decision d = ql->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ(int(d.fwdId), 32, "initial value gamma^hmin prefers the sink");
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.score, 1.0, 1e-12, "gamma^0 = 1 for the sink");
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.aux, 1.0, 1e-12, "arriving at a sink is worth 1");
+        // success at the sink: target 1; Q <- 1 + 0.5 (1 - 1) = 1
+        ql->OnLabel(d, 1, LabelSource::Ack, Seconds(1001));
+        NS_TEST_ASSERT_MSG_EQ_TOL(ql->Q(32), 1.0, 1e-12, "success at the sink keeps Q at 1");
+        // failure: the packet stays at i, target = gamma * V_i = 0.8 * 1 (V_i = best Q = 1): Q <- 1 + 0.5 (0.8 - 1) = 0.9
+        ql->OnLabel(d, 0, LabelSource::AckTimeout, Seconds(1002));
+        NS_TEST_ASSERT_MSG_EQ_TOL(ql->Q(32), 1.0 + 0.5 * (0.8 * 1.0 - 1.0), 1e-12, "failure bootstraps from V_i, not V_j");
+        // a failed hop is NOT credited with the next hop's value: the relay (aux = 0.8 * 0.5 = 0.4) fails
+        Decision toRelay;
+        toRelay.fwdId = 31;
+        toRelay.score = std::pow(0.8, 2);
+        toRelay.aux = 0.4;
+        ql->OnLabel(toRelay, 0, LabelSource::AckTimeout, Seconds(1003));
+        const double vi = 1.0; // m_valueSelf after the last Select
+        NS_TEST_ASSERT_MSG_EQ_TOL(ql->Q(31), 0.64 + 0.5 * (0.8 * vi - 0.64), 1e-12, "failure target is gamma V_i whatever V_j is");
+        // values never exceed 1: reward 1 only at the sink, everything is a discounted probability
+        ql->OnLabel(toRelay, 1, LabelSource::Ack, Seconds(1004));
+        NS_TEST_ASSERT_MSG_EQ((ql->Q(31) <= 1.0), true, "Q stays a probability-like value, no growth with path length");
+
+        Ptr<SelectorQLearning> old = MakeBaseline<SelectorQLearning>("ns3::cbergr::SelectorQLearning", "Epsilon=0;Alpha=0.3;Gamma=0.8;StepCost=0.1;Legacy=true");
+        old->AssignStreams(901);
+        Decision dl = old->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ_TOL(dl.score, 1.3, 1e-12, "legacy initial value");
+        old->OnLabel(dl, 0, LabelSource::AckTimeout, Seconds(1002));
+        NS_TEST_ASSERT_MSG_EQ_TOL(old->Q(32), 1.3 + 0.3 * (-0.1 - 1.3), 1e-12, "legacy update unchanged");
+    }
+};
+
+// Step 1f: ThompsonDisagree asks for an ACK only when extra posterior samples would have chosen differently.
+class ThompsonDisagreeGateAsksOnlyWhenTheChoiceIsUncertain : public TestCase
+{
+  public:
+    ThompsonDisagreeGateAsksOnlyWhenTheChoiceIsUncertain()
+        : TestCase("R3-1f: AckGate=ThompsonDisagree requests an ACK on disagreement, rarely once the choice is clear")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const std::string common = "AckMode=Gated;AckGate=ThompsonDisagree;DisagreeDraws=4;QAudit=0";
+        Ptr<SelectorCbV5> sel = MakeCbSelector(common);
+        sel->AssignStreams(700);
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry a = MakeNeighbour(11, 22.0); // strong
+        NeighbourEntry b = MakeNeighbour(12, 2.0);  // weak
+        std::vector<Candidate> eligible = {{11, &a}, {12, &b}};
+        int askedCold = 0, askedWarm = 0;
+        const int n = 200;
+        for (int i = 0; i < n; ++i)
+        {
+            Decision d = sel->Select(ctx, eligible, Seconds(1000 + i));
+            askedCold += d.ackRequest ? 1 : 0;
+        }
+        // Teach it: 11 almost always succeeds, 12 almost never.
+        std::mt19937 gen(5);
+        std::uniform_real_distribution<double> coin(0.0, 1.0);
+        for (int i = 0; i < 600; ++i)
+        {
+            Decision d = sel->Select(ctx, eligible, Seconds(1300 + i));
+            sel->OnSent(d, Seconds(1300 + i));
+            sel->OnLabel(d, coin(gen) < (d.fwdId == 11 ? 0.97 : 0.03) ? 1 : 0, LabelSource::Ack, Seconds(1301 + i));
+        }
+        for (int i = 0; i < n; ++i)
+        {
+            Decision d = sel->Select(ctx, eligible, Seconds(2000 + i));
+            askedWarm += d.ackRequest ? 1 : 0;
+        }
+        NS_TEST_ASSERT_MSG_EQ((askedWarm < askedCold), true, "fewer ACK requests once the posterior favours one forwarder");
+        NS_TEST_ASSERT_MSG_EQ((askedWarm < n / 4), true, "a clear choice rarely asks (disagreement, not width)");
+        // retries always ask, in every gate
+        PacketCtx retry = ctx;
+        retry.attempt = 2;
+        NS_TEST_ASSERT_MSG_EQ(sel->Select(retry, eligible, Seconds(3000)).ackRequest, true, "retries always ask");
+    }
+};
+
 // LinQ (§11 B4): semi-gradient TD(0) on the CB features.
 class LinearQMovesItsWeightsTowardTheTarget : public TestCase
 {
   public:
     LinearQMovesItsWeightsTowardTheTarget()
-        : TestCase("D6: LinQ TD(0) weight update")
+        : TestCase("D6: LinQ legacy TD(0) weight update")
     {
     }
 
@@ -1933,7 +2352,7 @@ class LinearQMovesItsWeightsTowardTheTarget : public TestCase
     void DoRun() override
     {
         Ptr<SelectorLfaQ> lfa =
-            MakeBaseline<SelectorLfaQ>("ns3::cbergr::SelectorLfaQ", "Epsilon=0;Step=0.05;Gamma=0.8;StepCost=0.1");
+            MakeBaseline<SelectorLfaQ>("ns3::cbergr::SelectorLfaQ", "Epsilon=0;Step=0.05;Gamma=0.8;StepCost=0.1;Legacy=true");
         lfa->AssignStreams(901);
         PacketCtx ctx = MakeCtx();
         NeighbourEntry nb = MakeNeighbour(41, 0.0);
@@ -1954,6 +2373,44 @@ class LinearQMovesItsWeightsTowardTheTarget : public TestCase
     }
 };
 
+// Step 1c for LinQ: success target = value of the arrival (1 at a sink, gamma V_j otherwise), failure target = gamma V_i.
+class LinearQNewTargetBootstrapsFailuresFromTheOwnValue : public TestCase
+{
+  public:
+    LinearQNewTargetBootstrapsFailuresFromTheOwnValue()
+        : TestCase("R3-1c: LinQ failure bootstraps from V_i, success at a sink is worth 1")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorLfaQ> lfa = MakeBaseline<SelectorLfaQ>("ns3::cbergr::SelectorLfaQ", "Epsilon=0;Step=0.05;Gamma=0.8");
+        lfa->AssignStreams(902);
+        PacketCtx ctx = MakeCtx();
+        NeighbourEntry sink = MakeNeighbour(42, 0.0);
+        sink.isSink = true;
+        sink.hmin = 0;
+        std::vector<Candidate> eligible = {{42, &sink}};
+        Decision d = lfa->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ_TOL(d.aux, 1.0, 1e-12, "arriving at a sink is worth 1");
+        lfa->OnLabel(d, 1, LabelSource::Ack, Seconds(1001));
+        for (int i = 0; i < 9; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ_TOL(lfa->Weights()[i], 0.05 * 1.0 * d.x[i], 1e-12, "w_" << i << " after a success at the sink");
+        }
+        // after the update V_i = w.x > 0; a failure now pulls the weights toward gamma V_i (not toward 0 - cost + gamma V_j)
+        Decision again = lfa->Select(ctx, eligible, Seconds(1002));
+        const double vi = again.score;
+        Vec<9> before = lfa->Weights();
+        lfa->OnLabel(again, 0, LabelSource::AckTimeout, Seconds(1003));
+        const double err = 0.8 * vi - vi; // target gamma V_i, prediction V_i
+        for (int i = 0; i < 9; ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ_TOL(lfa->Weights()[i], before[i] + 0.05 * err * again.x[i], 1e-12, "failure update w_" << i);
+        }
+    }
+};
 
 // Oracle evaluator (§11 O/GO): true-world hop success is the link model at the true distance and shadowing.
 class OracleSuccessMatchesTheLinkModel : public TestCase
@@ -2971,6 +3428,12 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new NewHeadStartsFromTheNeighbourCellsModel, TestCase::QUICK);
         AddTestCase(new PublishedGeometryHas32NeighboursAndBfsHmin, TestCase::QUICK);
         AddTestCase(new PublishedProtocolRunsAndIsDeterministic, TestCase::QUICK);
+        AddTestCase(new AckTimeoutKeepsTheRecordAndExpiryCensors, TestCase::QUICK);
+        AddTestCase(new FramesForOtherNodesChangeNothing, TestCase::QUICK);
+        AddTestCase(new QLearningTargetIsReachSinkProbability, TestCase::QUICK);
+        AddTestCase(new LinearQNewTargetBootstrapsFailuresFromTheOwnValue, TestCase::QUICK);
+        AddTestCase(new ThompsonDisagreeGateAsksOnlyWhenTheChoiceIsUncertain, TestCase::QUICK);
+        AddTestCase(new LossBudgetHopCountMatchesTruthUnderAloha, TestCase::QUICK);
     }
 };
 

@@ -38,7 +38,8 @@ namespace cbergr
 enum class AckGate
 {
     Logit,   ///< spec §8.6: width(x) = sqrt(x^T A^-1 x) > TauW (TauW = 0.3 is the spec value)
-    ProbStd  ///< ablation: std of the success probability, p (1 - p) width(x), > ProbStdThreshold
+    ProbStd, ///< ablation: std of the success probability, p (1 - p) width(x), > ProbStdThreshold
+    ThompsonDisagree ///< decision-relevant: draw M extra posterior samples, ask for an ACK only if one of their argmax differs from the chosen option
 };
 
 /// When to ask for a hop ACK (spec §10, R11).
@@ -75,7 +76,8 @@ class SelectorCbV5 : public ForwarderSelector
     double Score(double pSuccess, const Features& x, double txEnergyJ, double batteryFraction) const;
 
     /// Spec §8.6: should this attempt ask for an ACK? 'width' is the model's uncertainty at x.
-    bool NeedsAck(const PacketCtx& pkt, double width, double pMean = -1.0);
+    /// 'disagree' is only used by AckGate=ThompsonDisagree (some extra posterior sample prefers another forwarder).
+    bool NeedsAck(const PacketCtx& pkt, double width, double pMean = -1.0, bool disagree = false);
 
     // --- Learning ---
     void OnSent(const Decision& d, Time now) override;
@@ -124,6 +126,7 @@ class SelectorCbV5 : public ForwarderSelector
     AckMode m_ackMode;
     AckGate m_ackGate;
     double m_probStdThreshold;
+    int m_disagreeDraws;
     double m_lambdaInit, m_eta, m_targetLifetimeS, m_priceTickS;
     double m_tauSync, m_cosGate, m_matureTrace, m_betaInflate;
     double m_handoverKeepS;

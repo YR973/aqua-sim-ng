@@ -90,7 +90,8 @@ enum class LabelSource
     AckTimeout,
     Bitmap,
     Expiry,
-    Void   ///< the forwarder reported a void (NACK) before any other label arrived
+    Void,  ///< the forwarder reported a void (NACK) before any other label arrived
+    Censored ///< no evidence either way by expiry: the learner gets nothing (or a 0 if CensoredLabels=Zero)
 };
 
 /// Events that make a learner widen its uncertainty (spec §8.11, K§2.3: only deaths / unplanned loss).

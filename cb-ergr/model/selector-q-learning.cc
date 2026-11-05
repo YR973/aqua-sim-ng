@@ -6,6 +6,7 @@
 
 #include "cb-ergr-params.h"
 
+#include "ns3/boolean.h"
 #include "ns3/double.h"
 
 #include <algorithm>
@@ -33,6 +34,8 @@ SelectorQLearning::GetTypeId()
                           MakeDoubleAccessor(&SelectorQLearning::m_epsilon), MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("StepCost", "Cost subtracted from the 0/1 reward.", DoubleValue(params::selector::kQlStepCost),
                           MakeDoubleAccessor(&SelectorQLearning::m_stepCost), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("Legacy", "Old target (y - StepCost) + Gamma * V_j with initial Q 1 + HminBonus*dHmin (QlLegacy).",
+                          BooleanValue(false), MakeBooleanAccessor(&SelectorQLearning::m_legacy), MakeBooleanChecker())
             .AddAttribute("HminBonus", "Initial Q bonus per hop of Hmin advantage.",
                           DoubleValue(params::selector::kQlHminBonus),
                           MakeDoubleAccessor(&SelectorQLearning::m_hminBonus), MakeDoubleChecker<double>(0.0));
@@ -60,7 +63,7 @@ double
 SelectorQLearning::Q(uint16_t id) const
 {
     auto it = m_q.find(id);
-    return it == m_q.end() ? 1.0 : it->second;
+    return it == m_q.end() ? (m_legacy ? 1.0 : m_gamma) : it->second;
 }
 
 Decision
@@ -78,7 +81,11 @@ SelectorQLearning::Select(const PacketCtx& pkt, const std::vector<Candidate>& el
         {
             return it->second;
         }
-        return 1.0 + m_hminBonus * (static_cast<double>(pkt.myHmin) - static_cast<double>(c.nb->hmin));
+        if (m_legacy)
+        {
+            return 1.0 + m_hminBonus * (static_cast<double>(pkt.myHmin) - static_cast<double>(c.nb->hmin));
+        }
+        return std::pow(m_gamma, static_cast<double>(c.nb->hmin)); // optimistic start: discounted hops to the sink
     };
     const Candidate* chosen = &eligible.front();
     double chosenValue = value(*chosen);
@@ -105,8 +112,17 @@ SelectorQLearning::Select(const PacketCtx& pkt, const std::vector<Candidate>& el
     d.ackRequest = true; // AckMode = Every
     d.pMean = std::max(0.0, std::min(1.0, chosenValue));
     d.score = chosenValue;
-    // Next-state value: a sink is terminal (0); otherwise what the forwarder advertised (0 if it never did).
-    d.aux = (chosen->nb->isSink || !chosen->nb->hasQ) ? 0.0 : chosen->nb->advertisedQ;
+    if (m_legacy)
+    {
+        // Next-state value: a sink is terminal (0); otherwise what the forwarder advertised (0 if it never did).
+        d.aux = (chosen->nb->isSink || !chosen->nb->hasQ) ? 0.0 : chosen->nb->advertisedQ;
+    }
+    else
+    {
+        // Value of a successful hop: 1 at a sink, else gamma * V_j (what j advertised, or the optimistic gamma^hmin_j).
+        const double vj = chosen->nb->hasQ ? chosen->nb->advertisedQ : std::pow(m_gamma, static_cast<double>(chosen->nb->hmin));
+        d.aux = chosen->nb->isSink ? 1.0 : m_gamma * vj;
+    }
     d.numCandidates = static_cast<uint8_t>(eligible.size());
     d.chosenRank = 1;
     d.valid = true;
@@ -116,8 +132,16 @@ SelectorQLearning::Select(const PacketCtx& pkt, const std::vector<Candidate>& el
 void
 SelectorQLearning::OnLabel(const Decision& d, int y, LabelSource src, Time now)
 {
-    const double reward = static_cast<double>(y) - m_stepCost;
-    const double target = reward + m_gamma * d.aux;
+    double target;
+    if (m_legacy)
+    {
+        target = (static_cast<double>(y) - m_stepCost) + m_gamma * d.aux;
+    }
+    else
+    {
+        // success: the value of arriving at j (d.aux); failure: the packet is still at i, so bootstrap from V_i.
+        target = y ? d.aux : m_gamma * m_valueSelf;
+    }
     const double previous = m_q.count(d.fwdId) ? m_q[d.fwdId] : d.score; // start from the value used at decision time
     m_q[d.fwdId] = previous + m_alpha * (target - previous);
 }

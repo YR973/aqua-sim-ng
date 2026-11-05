@@ -49,13 +49,13 @@ LossBudget::OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t rec
     m_attempts.push_back(a);
     const size_t idx = m_attempts.size() - 1;
     m_pending.push_back(idx);
-    m_unbound[node].push_back(idx);
     m_byKey[std::make_tuple(a.key.source, a.key.seq, node, a.fwd)].push_back(idx);
     m_lastAttemptOfPacket[std::make_tuple(a.key.source, a.key.seq)] = idx;
 }
 
 void
-LossBudget::OnLinkEval(uint32_t txNode, uint32_t rxNode, FrameType type, uint32_t bytes, double distM, bool decodable, double nowS)
+LossBudget::OnLinkEval(uint32_t txNode, uint32_t rxNode, FrameType type, uint32_t bytes, double distM, bool decodable, double nowS,
+                       uint64_t dataId)
 {
     if (!Enabled())
     {
@@ -77,12 +77,21 @@ LossBudget::OnLinkEval(uint32_t txNode, uint32_t rxNode, FrameType type, uint32_
         }
         if (type == FrameType::Data)
         {
-            auto& pending = m_unbound[txNode];
-            if (!pending.empty())
+            const uint16_t source = static_cast<uint16_t>(dataId >> 32);
+            const uint16_t seq = static_cast<uint16_t>(dataId >> 16);
+            const uint32_t fwd = static_cast<uint32_t>(dataId & 0xffff);
+            auto list = m_byKey.find(std::make_tuple(source, seq, txNode, fwd));
+            if (list != m_byKey.end())
             {
-                m_bound[txNode] = {nowS, pending.front()};
-                m_attempts[pending.front()].bound = true;
-                pending.pop_front();
+                for (size_t idx : list->second) // the oldest attempt with this identity that is not yet on the air
+                {
+                    if (!m_attempts[idx].bound)
+                    {
+                        m_bound[txNode] = {nowS, idx};
+                        m_attempts[idx].bound = true;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -97,7 +106,7 @@ LossBudget::OnLinkEval(uint32_t txNode, uint32_t rxNode, FrameType type, uint32_
             attemptIdx = static_cast<int64_t>(b->second.second);
         }
     }
-    q.push_back({arrS, arrS + air, type, txNode, attemptIdx});
+    q.push_back({arrS, arrS + air, type, txNode, attemptIdx, decodable});
     while (!q.empty() && q.front().e < nowS - kKeepS)
     {
         q.pop_front();
@@ -188,6 +197,7 @@ LossBudget::Classify(Attempt& a)
                 }
             }
             bool data = false, ctl = false, ack = false, samePacket = false, sameSender = false;
+            bool dataDecodable = false, dataStartsInside = false;
             for (const Arrival& o : m_arrivals[a.fwd])
             {
                 if (o.tx == a.sender && std::fabs(o.s - a.arrS) < 1e-7)
@@ -197,6 +207,11 @@ LossBudget::Classify(Attempt& a)
                 if (o.s < a.arrE && o.e > a.arrS)
                 {
                     data = data || o.type == FrameType::Data;
+                    if (o.type == FrameType::Data)
+                    {
+                        dataDecodable = dataDecodable || o.ok;
+                        dataStartsInside = dataStartsInside || (o.s >= a.arrS);
+                    }
                     if (o.type == FrameType::Data && o.attempt >= 0)
                     {
                         samePacket = samePacket || (m_attempts[o.attempt].key == a.key);
@@ -213,6 +228,14 @@ LossBudget::Classify(Attempt& a)
             else if (data)
             {
                 cause = "collision_with_data";
+                // Why it matters for transmit-power control (CHANGELOG 7 Nov): in this PHY a DECODABLE overheard frame locks the receiver in
+                // RECV (a later frame is lost) while an UNDECODABLE one only sets the collision flag, which the next decodable arrival resets.
+                m_hopCauses[dataDecodable ? "  of which: some overlapping DATA frame was decodable at the victim receiver"
+                                          : "  of which: every overlapping DATA frame was undecodable at the victim receiver"]++;
+                if (dataStartsInside)
+                {
+                    m_hopCauses["  of which: an overlapping DATA frame started inside the victim's window"]++;
+                }
                 if (samePacket)
                 {
                     m_hopCauses["  of which: the other DATA frame is the same packet"]++;

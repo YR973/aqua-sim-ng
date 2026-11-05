@@ -110,7 +110,8 @@ class MetricsCollector : public Object
                     double distM,
                     double snrDb,
                     bool ok,
-                    RxFailReason reason);
+                    RxFailReason reason,
+                    uint64_t dataId = 0);
     /// PHY dropped an incoming frame as erroneous (collision, half-duplex or below threshold).
     void OnPhyRxError(uint32_t node);
 
@@ -153,6 +154,12 @@ class MetricsCollector : public Object
                  bool learn,
                  const Decision& decision);
     void OnDuplicateLabel(uint32_t node);
+
+    /// An ACK timer fired while the record is kept (the retry starts; the label is decided later). Counts a "false" timeout when
+    /// the forwarder had in fact received the frame (ground truth, logging only).
+    /// Sender-side pending table size after an insert (peak over all nodes).
+    void OnPendingSize(size_t n);
+    void OnAckTimeoutFired(uint32_t node, uint16_t fwd, uint16_t hopSeq);
     /// Regret of one decision against the oracle (>= 0); 'multiViable' = at least two candidates had margin > 0.
     void OnRegret(double regret, bool multiViable);
     void OnAckSent(uint32_t node);
@@ -193,6 +200,10 @@ class MetricsCollector : public Object
     uint64_t TotalAttempts() const { return m_totalAttempts; }
     uint64_t TotalLabels() const { return m_totalLabels; }
     uint64_t TotalFalseNegatives() const { return m_falseNegatives; }
+    uint64_t CensoredLabels() const { return m_censored; }
+    uint64_t CensoredButReceived() const { return m_censoredReceived; }
+    uint64_t TimeoutsFired() const { return m_timeoutsFired; }
+    uint64_t TimeoutsFalse() const { return m_timeoutsFalse; }
     uint64_t TotalBytesTx(FrameType t) const { return m_totalBytesTx[static_cast<int>(t)]; }
     uint32_t PacketsCreated() const { return m_createdCounted; }
     uint32_t PacketsDelivered() const { return m_deliveredCounted; }
@@ -215,7 +226,7 @@ class MetricsCollector : public Object
         uint64_t attempts = 0, firstAttempts = 0, retransmissions = 0;
         uint64_t hopSuccessFirst = 0, hopSuccessRetry = 0;   ///< ground truth, by attempt number
         uint64_t arRequested = 0, acksSent = 0, acksReceived = 0, ackTimeouts = 0, duplicateLabels = 0;
-        std::array<uint64_t, 5> labelsBySource{};            ///< Ack, AckTimeout, Bitmap, Expiry, Void
+        std::array<uint64_t, 6> labelsBySource{};            ///< Ack, AckTimeout, Bitmap, Expiry, Void, Censored
         std::array<uint64_t, 2> labelsByValue{};
         double labelDelaySumS = 0.0;
         double headTimeS = 0.0;
@@ -255,7 +266,7 @@ class MetricsCollector : public Object
     struct LinkStats
     {
         uint64_t attempts = 0, retx = 0, truthSuccess = 0;
-        std::array<uint64_t, 5> labelsBySource{};   ///< label 1 / 0 split is in the two arrays below
+        std::array<uint64_t, 6> labelsBySource{};   ///< label 1 / 0 split is in the two arrays below
         uint64_t labelOnes = 0, labelZeros = 0;
         double distSumM = 0.0, predSum = 0.0;
         double firstS = -1.0, lastS = 0.0;
@@ -295,7 +306,9 @@ class MetricsCollector : public Object
     std::map<std::pair<uint32_t, uint32_t>, SnrStats> m_linkSnr;   ///< DATA frames only
     std::ofstream m_decisionsFile;
     uint64_t m_totalAttempts = 0, m_totalLabels = 0, m_falseNegatives = 0, m_labelZeros = 0;
-    std::array<uint64_t, 5> m_labelsBySource{};
+    std::array<uint64_t, 6> m_labelsBySource{};
+    uint64_t m_peakPending = 0;
+    uint64_t m_censored = 0, m_censoredReceived = 0, m_timeoutsFired = 0, m_timeoutsFalse = 0;
     double m_labelDelaySumS = 0.0;
     std::vector<double> m_labelDelays;
     uint64_t m_arAttempts = 0, m_duplicateLabelsTotal = 0;
