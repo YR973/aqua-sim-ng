@@ -2034,6 +2034,22 @@ class OracleSelectorPicksTheTrulyBestHop : public TestCase
         NS_TEST_ASSERT_MSG_EQ((d.pMean > 0.9), true, "reported success is the true probability");
         NS_TEST_ASSERT_MSG_EQ(d.ackRequest, true, "same feedback as the other methods");
 
+        // Oracle with transmit-power levels (6 Nov 2026): a strong link takes the cheapest level that still works, a marginal link
+        // keeps the full level. Energy price = the spec's initial lambda (0.25 per J), 8 W radio, airtime 0.075 s.
+        Ptr<SelectorOracle> op = MakeBaseline<SelectorOracle>("ns3::cbergr::SelectorOracle", "EnablePower=true;TxPowerFullW=8");
+        op->SetOracle(oracle);
+        SelectorServices ps = services;
+        ps.airtimeS = [](uint32_t bytes) { return bytes * 8.0 / 17800.0; };
+        op->SetServices(ps);
+        std::vector<Candidate> onlyNear = {{2, &near}};
+        Decision strong = op->Select(ctx, onlyNear, Seconds(100));
+        NS_TEST_ASSERT_MSG_EQ(int(strong.powerLevel), 0, "600 m: the lowest level still works, so it is chosen");
+        std::vector<Candidate> onlyFar = {{3, &far}};
+        Decision marginal = op->Select(ctx, onlyFar, Seconds(100));
+        NS_TEST_ASSERT_MSG_EQ(int(marginal.powerLevel), params::phy::kNumPowerLevels - 1, "1400 m: full power");
+        NS_TEST_ASSERT_MSG_EQ(int(o->Select(ctx, onlyNear, Seconds(100)).powerLevel), params::phy::kNumPowerLevels - 1,
+                              "without EnablePower the oracle always uses the full level");
+
         // Without an oracle there is no decision (a learner can never get one).
         Ptr<SelectorOracle> blind = MakeBaseline<SelectorOracle>("ns3::cbergr::SelectorOracle", "");
         blind->SetServices(services);

@@ -127,6 +127,7 @@ constexpr int kVoidRetryLimit = 3;       // [CONFIRM] A6 NACK-triggered re-selec
 constexpr double kDataStartS = 300.0;    // [DESIGN] D§3 P6 data starts after start-up
 constexpr double kBeaconJitterFraction = 0.0; // beacons are strictly periodic after a random first phase
 constexpr double kPhyRxDelayAirtimes = 1.0; // [MEASURED] Aqua-Sim hands a frame to the MAC 2 airtimes after it starts arriving (collision check + signal cache); the ACK timeout allows for the extra one, CONFIRM E17
+constexpr double kMacDelayAllowanceS = 0.0; // the scenario sets (CwMin + CwControl) x slot for Mac=Csma: the ACK timeout must cover the MAC backoff of the DATA and of the ACK
 constexpr double kAckSoundSpeedMps = 1500.0; // [SPEC] S§9.1 propagation speed used in the ACK timeout
 constexpr bool kRetriesAlwaysAck = true;  // [SPEC] S§9.12 retries always request an ACK
 constexpr int kSuspectTimeouts = 2;       // [DESIGN] D§3 P4 consecutive ACK timeouts before a forwarder is suspected

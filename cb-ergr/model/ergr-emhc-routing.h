@@ -226,6 +226,7 @@ class ErgrEmhcRouting : public AquaSimRouting
     uint32_t m_headRoundRobin = 0;
     std::map<uint16_t, int> m_consecutiveTimeouts;   ///< per forwarder: ACK timeouts since the last sign of life
     std::map<uint16_t, Time> m_suspectUntil;          ///< forwarders excluded until this time (D§3 P4)
+    double m_macDelayAllowanceS;
     // Head solicitation
     bool m_solicit;
     double m_solicitWaitS, m_solicitReplyJitterS, m_solicitReplyMinGapS;

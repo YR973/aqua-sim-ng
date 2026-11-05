@@ -2,6 +2,48 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-06 20:00 — Step 4 fix 2 (CSMA and the ACK timeout) and Step 5: headroom with 20 seeds, PDR and energy, oracle with power levels
+- What:
+  * **Fix 2: the hop-ACK timeout now includes the MAC backoff** (`MacDelayAllowanceS` = (CwMin + CwControl) x slot = 1.0 s for `Mac=Csma`, 0 for Aloha). Found in the first 20-seed headroom run: with Csma every method with feedback looked WORSE than with Aloha (RR+FB at N = 300, 10 sources: 91% of ACK labels were timeouts, 33% of them false, 9.4 retransmissions per delivered packet, hop success 0.385, 2x the energy per packet) because the DATA and the ACK now wait in the CSMA backoff but the timeout of the spec formula (airtime + propagation + TProc + TGuard) did not allow for it. Effect on test 16: none (P0 has no ACK timeouts). Effect on g: RR+FB, N = 300, 10 sources, Csma: PDR 0.716 -> 0.736, energy per delivered packet 86.9 J -> 47.2 J (table below; the row "before" is `results/reference/headroom2/headroom_before_ackfix.md`).
+  * `SelectorOracle` takes `EnablePower`, `LambdaE` (fixed energy price, the spec's initial 0.25 per J) and `TxPowerFullW`: it then maximises success x progress - LambdaE x Etx(level) over candidate AND level. The scenario passes the radio's `TxPowerFullW` to CB and the oracle (CB used the params default of 2 W before, wrong for the 8 W paper radio; its energy term only matters with `EnablePower=true`).
+  * `scripts/headroom.py`: 20 seeds (101-120), PDR and energy per delivered packet, paired 95% CI of the gaps, an "Oracle+power" column; test for the oracle with power levels (49 cases pass).
+- Why: user request of 6 Nov 2026, steps 4 and 5; from now on every compared number uses 20 seeds.
+- Effect on results: all ERGR-EMHC-g results with `Mac=Csma` and feedback produced before this entry are superseded.
+- Setup of step 5: `configs/g-base.txt` (paper radio, TPre = 0, lean beacons, solicit, equal-Hmin fallback), calibrated channel (shadowing sigma 5 dB), 0.07 pkt/s per source, 2000 s, 0 m/s NOT set (speed 1 m/s as in g-base), seeds 101-120. "FW-tuned" = `configs/fw-tuned-v2.txt` (tuned on 5 Nov at N = 100 in the old benchmark with TPre 0.1; not retuned: tuning is stopped). Oracle = per-hop oracle (best true success x progress), Oracle+power as above with E_tx = 8 W x scale x airtime.
+- Result:
+
+PDR (mean of 20 seeds) and the paired gaps (95% CI)
+
+| N | MAC | sources | oracle hop success | RR | RR+FB | FW-phys | FW-tuned | Oracle | Oracle+power | oracle - best FW | oracle - RR+FB | oracle - RR |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 100 | Csma | 10 | 0.684 | 0.443 | 0.746 | 0.819 | 0.819 | 0.843 | 0.845 | +0.023 +- 0.010 | +0.097 +- 0.015 | +0.399 +- 0.020 |
+| 100 | Csma | 30 | 0.436 | 0.370 | 0.553 | 0.610 | 0.615 | 0.626 | 0.663 | +0.011 +- 0.008 | +0.073 +- 0.007 | +0.256 +- 0.013 |
+| 100 | Aloha | 10 | 0.704 | 0.445 | 0.744 | 0.816 | 0.820 | 0.839 | 0.845 | +0.019 +- 0.009 | +0.095 +- 0.018 | +0.394 +- 0.022 |
+| 100 | Aloha | 30 | 0.530 | 0.368 | 0.571 | 0.646 | 0.646 | 0.666 | 0.696 | +0.020 +- 0.010 | +0.095 +- 0.011 | +0.297 +- 0.013 |
+| 300 | Csma | 10 | 0.631 | 0.426 | 0.736 | 0.776 | 0.776 | 0.791 | 0.793 | +0.015 +- 0.011 | +0.055 +- 0.014 | +0.365 +- 0.015 |
+| 300 | Csma | 30 | 0.432 | 0.337 | 0.544 | 0.588 | 0.587 | 0.602 | 0.615 | +0.014 +- 0.009 | +0.058 +- 0.010 | +0.266 +- 0.010 |
+| 300 | Aloha | 10 | 0.652 | 0.428 | 0.722 | 0.763 | 0.767 | 0.786 | 0.774 | +0.019 +- 0.012 | +0.064 +- 0.016 | +0.358 +- 0.017 |
+| 300 | Aloha | 30 | 0.504 | 0.338 | 0.554 | 0.605 | 0.597 | 0.616 | 0.637 | +0.012 +- 0.011 | +0.063 +- 0.009 | +0.278 +- 0.008 |
+
+
+Energy per delivered packet (J; transmit + receive + idle of all ordinary nodes)
+
+| N | MAC | sources | RR | RR+FB | FW-phys | FW-tuned | Oracle | Oracle+power |
+|---|---|---|---|---|---|---|---|---|
+| 100 | Csma | 10 | 15.7 | 17.2 | 13.3 | 13.4 | 12.8 | 11.1 |
+| 100 | Csma | 30 | 13.6 | 20.3 | 17.1 | 16.9 | 17.0 | 13.3 |
+| 100 | Aloha | 10 | 15.6 | 16.4 | 12.6 | 12.6 | 12.1 | 10.6 |
+| 100 | Aloha | 30 | 13.7 | 17.8 | 14.2 | 14.2 | 13.9 | 11.3 |
+| 300 | Csma | 10 | 46.2 | 47.2 | 41.8 | 41.8 | 40.5 | 38.1 |
+| 300 | Csma | 30 | 39.3 | 54.5 | 48.2 | 48.4 | 47.9 | 42.7 |
+| 300 | Aloha | 10 | 45.9 | 45.8 | 40.4 | 39.6 | 38.7 | 37.2 |
+| 300 | Aloha | 30 | 38.9 | 48.6 | 42.2 | 42.8 | 41.9 | 37.6 |
+
+  1. **No scenario reaches an oracle - FW gap of 0.1: the gap is +0.011 to +0.023 (95% CI about +-0.01).** The oracle - RR+FB gap is 0.055-0.097 and the oracle - RR gap 0.26-0.40; so nearly everything between round robin and the oracle is obtained by hop feedback plus the static feature rule (FW); what is left for any learner to win over FW is 1-2 PDR points. The oracle's hop success is 0.43-0.70: the remaining losses are collisions (DATA with DATA and with beacons), which no forwarder choice avoids.
+  2. **Energy per delivered packet:** RR is cheapest (no ACKs) but delivers 0.34-0.45; with feedback FW needs 12.6-48 J, the oracle 12.1-48 J (the same), and ACKs and retries cost 7-30% more than RR for the extra 0.3-0.4 PDR.
+  3. **Oracle with power levels: PDR equal or higher (+0.000 to +0.037; the largest gain at 30 sources: N = 100, Csma 0.626 -> 0.663, Aloha 0.666 -> 0.696) and energy per delivered packet 4-22% lower** (N = 100, Csma, 30 sources 17.0 J -> 13.3 J, -22%; N = 300, Csma, 10 sources 40.5 -> 38.1 J, -6%). So power control is the only place where the oracle beats the static rule by more than noise (PDR +0.02-0.04 at 30 sources, energy -5 to -22%), though still not near 0.1 of PDR. A caution about the mechanism: lowering the power does NOT cut interference in this PHY, because every node within R still gets a copy of every frame and an undecodable frame still counts as a collision (see the step 3 review); the PDR gain at 30 sources therefore comes from somewhere else (less Tx energy, fewer dead receivers) and is not tested here.
+  4. Csma vs Aloha now give similar PDR (differences 0 to 0.07, Csma higher at N = 100 with 10 sources, lower at others), as the loss budget predicted.
+
 ## 2026-11-06 16:00 — Step 4, fix 1: no preamble in the paper-aligned configs (TPre = 0)
 - What: `TPre = 0` in `configs/p0-published.txt` and `configs/g-base.txt` (the spec default 0.1 s stays in the code and in `configs/g-sensitivity.txt`).
 - Why: the loss budget showed that the loss is contention (DATA-DATA and beacon collisions) and that contention scales with the airtime, which at 17.8 kbit/s is mostly preamble (25 B beacon: 0.111 s of which 0.100 s preamble; 150 B data: 0.175 s of which 0.100 s). The paper gives no preamble and Aqua-Sim's own default is 0; the spec sweep includes TPre = 0.

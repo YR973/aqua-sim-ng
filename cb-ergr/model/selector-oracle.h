@@ -32,6 +32,9 @@ class SelectorOracle : public ForwarderSelector
     bool m_geoOnly;     ///< GO: ignore shadowing
     double m_kappaP;
     bool m_requestAck;
+    bool m_enablePower;
+    double m_lambdaE;
+    double m_txPowerFullW;
 };
 
 } // namespace cbergr

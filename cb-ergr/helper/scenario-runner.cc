@@ -331,6 +331,8 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetAttribute("BeaconPeriodS", DoubleValue(s.beaconPeriodS));
         routing->SetAttribute("LeanBeacons", BooleanValue(s.leanBeacons));
         routing->SetAttribute("QuorumDetection", BooleanValue(s.quorumDetection));
+        routing->SetAttribute("MacDelayAllowanceS",
+                              DoubleValue(s.mac == "Csma" ? (params::mac::kCwMin + params::mac::kCwControl) * params::mac::kSlotS : 0.0));
         routing->SetAttribute("DeadQuorum", UintegerValue(s.deadQuorum));
         routing->SetAttribute("DeadGuardS", DoubleValue(s.deadGuardS));
         routing->SetAttribute("DeadReportRepeatS", DoubleValue(s.deadReportRepeatS));
@@ -355,6 +357,10 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         else
         {
             selectorFactory.SetTypeId("ns3::cbergr::Selector" + s.selector);
+        }
+        if (s.selector == "Oracle" || s.selector == "CbV5")
+        {
+            selectorFactory.Set("TxPowerFullW", DoubleValue(s.txPowerFullW)); // the energy term must use the scenario's radio
         }
         if (s.selector == "CbV5")
         {

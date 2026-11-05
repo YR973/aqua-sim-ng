@@ -142,6 +142,9 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("PreElectionLeadS", "Members announce themselves this long before an election round (lean mode).",
                           DoubleValue(params::timers::kPreElectionLeadS),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_preElectionLeadS), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("MacDelayAllowanceS", "Added to the ACK timeout: backoff the MAC may impose on the DATA and on the ACK (s).",
+                          DoubleValue(params::timers::kMacDelayAllowanceS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_macDelayAllowanceS), MakeDoubleChecker<double>(0.0))
             .AddAttribute("Solicit", "E34: a member without a head row holds its packet and asks the heads of its cell to beacon.",
                           BooleanValue(params::solicit::kEnabled), MakeBooleanAccessor(&ErgrEmhcRouting::m_solicit),
                           MakeBooleanChecker())
@@ -221,6 +224,7 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_ackGuardS(params::timers::kAckGuardS),
       m_phyRxDelayAirtimes(params::timers::kPhyRxDelayAirtimes),
       m_retriesAlwaysAck(params::timers::kRetriesAlwaysAck),
+      m_macDelayAllowanceS(params::timers::kMacDelayAllowanceS),
       m_solicit(params::solicit::kEnabled),
       m_solicitWaitS(params::solicit::kWaitS),
       m_solicitReplyJitterS(params::solicit::kReplyJitterS),
@@ -1251,7 +1255,7 @@ ErgrEmhcRouting::AckTimeoutS(uint16_t fwdId, double dataBytes)
         distM = Distance(nb->PredictedPos(Simulator::Now()), EstimatedPosition());
     }
     double airS = (1.0 + m_phyRxDelayAirtimes) * (dataAirS + ackAirS);
-    return airS + 2.0 * distM / params::timers::kAckSoundSpeedMps + m_ackProcS + m_ackGuardS;
+    return airS + 2.0 * distM / params::timers::kAckSoundSpeedMps + m_ackProcS + m_ackGuardS + m_macDelayAllowanceS;
 }
 
 void

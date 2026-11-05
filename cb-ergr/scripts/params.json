@@ -222,6 +222,7 @@
   "kHandoverKeepS": 400.0,
   "kHeaderFirstRx": false,
   "kLeanBeacons": true,
+  "kMacDelayAllowanceS": 0.0,
   "kMaxTx": 3,
   "kNackWindowS": 8.0,
   "kNeighbourTimeoutBeacons": 3,
