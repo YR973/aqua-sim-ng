@@ -42,6 +42,10 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
 {
     c.Add("NoiseBandXMinM", &s.noiseBandXMinM, "Heterogeneous scenario: noise band start x (m)");
     c.Add("NoiseBandXMaxM", &s.noiseBandXMaxM, "Noise band end x (m)");
+    c.Add("NoiseBandYMinM", &s.noiseBandYMinM, "Noise region: y from (m)");
+    c.Add("NoiseBandYMaxM", &s.noiseBandYMaxM, "Noise region: y to (m)");
+    c.Add("NoiseBandZMinM", &s.noiseBandZMinM, "Noise region: depth from (m)");
+    c.Add("NoiseBandZMaxM", &s.noiseBandZMaxM, "Noise region: depth to (m)");
     c.Add("NoiseBandStartS", &s.noiseBandStartS, "Noise burst: the band switches on at this time (s)");
     c.Add("NoiseBandEndS", &s.noiseBandEndS, "Noise burst: the band switches off at this time (s), negative = stays on");
     c.Add("NoiseBandOffsetDb", &s.noiseBandOffsetDb, "Extra noise heard by receivers in the band (dB), 0 = off");
@@ -99,6 +103,7 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("LogPackets", &s.logPackets, "Write packets.csv");
     c.Add("LogEvents", &s.logEvents, "Write events.csv");
     c.Add("LogDecisions", &s.logDecisions, "Write decisions.csv");
+    c.Add("LogThetaTrace", &s.logThetaTrace, "Write theta_trace.csv (mean learned weights over time, CB only)");
     c.Add("MeasureCpu", &s.measureCpu, "Time Select, OnSent and OnLabel with std::chrono and write them to cost.csv");
     c.Add("LogCounterfactual", &s.logCounterfactual, "Write counterfactual.csv (ground truth per eligible candidate; no node reads it)");
     c.Add("ShadowSelectorAttributes", &s.shadowSelectorAttributes, "Attributes of the FixedWeight selector that is asked the same question as the real one in counterfactual.csv");
@@ -232,6 +237,10 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     propagation->SetAttribute("NoiseBandXMinM", DoubleValue(s.noiseBandXMinM));
     propagation->SetAttribute("NoiseBandXMaxM", DoubleValue(s.noiseBandXMaxM));
     propagation->SetAttribute("NoiseBandOffsetDb", DoubleValue(s.noiseBandOffsetDb));
+    propagation->SetAttribute("NoiseBandYMinM", DoubleValue(s.noiseBandYMinM));
+    propagation->SetAttribute("NoiseBandYMaxM", DoubleValue(s.noiseBandYMaxM));
+    propagation->SetAttribute("NoiseBandZMinM", DoubleValue(s.noiseBandZMinM));
+    propagation->SetAttribute("NoiseBandZMaxM", DoubleValue(s.noiseBandZMaxM));
     propagation->SetAttribute("NoiseBandStartS", DoubleValue(s.noiseBandStartS));
     propagation->SetAttribute("NoiseBandEndS", DoubleValue(s.noiseBandEndS));
     CbErgrHelper::ConnectLinkTrace(propagation, metrics);
@@ -574,6 +583,36 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         }
         return sizes;
     });
+    if (s.logThetaTrace)
+    {
+        auto trace = std::make_shared<std::ofstream>(s.outDir + "/theta_trace.csv");
+        *trace << "t_s,heads_with_labels";
+        for (int i = 1; i <= params::feature::kFullDim; ++i)
+        {
+            *trace << ",theta" << i;
+        }
+        *trace << '\n';
+        auto sample = std::make_shared<std::function<void()>>();
+        *sample = [routings, trace, sample]() {
+            std::map<std::string, double> out;
+            for (const Ptr<ErgrEmhcRouting>& r : routings)
+            {
+                if (!r->IsSink() && r->IsAlive() && r->IsHead() && r->GetSelector())
+                {
+                    r->GetSelector()->Diagnostics(out);
+                }
+            }
+            const double n = out.count("theta_heads") ? out["theta_heads"] : 0.0;
+            *trace << Simulator::Now().GetSeconds() << ',' << n;
+            for (int i = 0; i < params::feature::kFullDim; ++i)
+            {
+                *trace << ',' << (n > 0 ? out["theta_sum_" + std::to_string(i)] / n : 0.0);
+            }
+            *trace << std::endl;
+            Simulator::Schedule(Seconds(100.0), *sample);
+        };
+        Simulator::Schedule(Seconds(100.0), *sample);
+    }
     metrics->AddCostNote("sizeof_neighbour_entry_bytes", sizeof(NeighbourEntry));
     metrics->AddCostNote("sizeof_pending_attempt_bytes", sizeof(PendingAttempt));
     metrics->AddCostNote("sizeof_held_packet_bytes", sizeof(HeldPacket));

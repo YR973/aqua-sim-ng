@@ -67,8 +67,8 @@ SelectorRoundRobin::Select(const PacketCtx& pkt, const std::vector<Candidate>& e
     if (m_features)
     {
         // For the decision log (and for fitting A1 offline); the choice above did not use these numbers.
-        FeatureBuilder::Features x = m_features->Build(pkt, *chosen->nb, params::phy::kNumPowerLevels - 1, now);
-        for (int i = 0; i < FeatureBuilder::kDim; ++i)
+        FeatureBuilder::FullFeatures x = m_features->BuildFull(pkt, *chosen->nb, params::phy::kNumPowerLevels - 1, now); // x10, x11 too (8 Nov 2026)
+        for (int i = 0; i < FeatureBuilder::kFullDim; ++i)
         {
             d.x[i] = x[i];
         }

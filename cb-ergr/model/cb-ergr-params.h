@@ -78,6 +78,10 @@ constexpr double kNoiseBandXMinM = 750.0;   // [DESIGN] heterogeneous scenario: 
 constexpr double kNoiseBandXMaxM = 1500.0;
 constexpr double kNoiseBandStartS = 0.0;    // [DESIGN] 7 Nov 2026: change scenario, the band is a burst between these times
 constexpr double kNoiseBandEndS = -1.0;     // negative = never switched off
+constexpr double kNoiseBandYMinM = -1.0e9;  // [DESIGN] 8 Nov 2026: no limit in y / depth unless a config sets one
+constexpr double kNoiseBandYMaxM = 1.0e9;
+constexpr double kNoiseBandZMinM = -1.0e9;
+constexpr double kNoiseBandZMaxM = 1.0e9;
 constexpr double kNoiseBandOffsetDb = 0.0;  // 0 = off; the heterogeneous scenario uses 10 dB
 constexpr bool kIdealLinks = false;      // [DESIGN] test 16 only: frames inside R always decode (the paper's near-error-free channel)
 constexpr double kShadowTickS = 5.0;     // [DESIGN] time grid of the process; see gm-shadowing.h

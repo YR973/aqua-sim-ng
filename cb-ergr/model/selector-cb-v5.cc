@@ -496,6 +496,14 @@ SelectorCbV5::Diagnostics(std::map<std::string, double>& out) const
     }
     out["max_abs_theta"] = std::max(out.count("max_abs_theta") ? out["max_abs_theta"] : 0.0, maxTheta);
     out["cb_nonfinite_theta_nodes"] += finite ? 0.0 : 1.0;
+    if (m_labels > 0)
+    {
+        for (int i = 0; i < kDim; ++i)
+        {
+            out["theta_sum_" + std::to_string(i)] += m_model.Theta()[i];   // heads that have learned something (for theta_trace.csv)
+        }
+        out["theta_heads"] += 1.0;
+    }
     out["max_trace_A"] = std::max(out.count("max_trace_A") ? out["max_trace_A"] : 0.0, m_model.TraceOwn());
 }
 

@@ -40,6 +40,14 @@ class CbErgrPropagation : public AquaSimPropagation
     double GetNoiseBandXMin() const { return m_noiseBand.xMinM; }
     void SetNoiseBandXMax(double v) { m_noiseBand.xMaxM = v; }
     double GetNoiseBandXMax() const { return m_noiseBand.xMaxM; }
+    void SetNoiseBandYMin(double v) { m_noiseBand.yMinM = v; }
+    double GetNoiseBandYMin() const { return m_noiseBand.yMinM; }
+    void SetNoiseBandYMax(double v) { m_noiseBand.yMaxM = v; }
+    double GetNoiseBandYMax() const { return m_noiseBand.yMaxM; }
+    void SetNoiseBandZMin(double v) { m_noiseBand.zMinM = v; }
+    double GetNoiseBandZMin() const { return m_noiseBand.zMinM; }
+    void SetNoiseBandZMax(double v) { m_noiseBand.zMaxM = v; }
+    double GetNoiseBandZMax() const { return m_noiseBand.zMaxM; }
     void SetNoiseBandStart(double v) { m_noiseBand.startS = v; }
     double GetNoiseBandStart() const { return m_noiseBand.startS; }
     void SetNoiseBandEnd(double v) { m_noiseBand.endS = v; }

@@ -23,6 +23,10 @@ struct ScenarioSettings
     double noiseBandXMinM = params::channel::kNoiseBandXMinM;
     double noiseBandXMaxM = params::channel::kNoiseBandXMaxM;
     double noiseBandOffsetDb = params::channel::kNoiseBandOffsetDb;
+    double noiseBandYMinM = params::channel::kNoiseBandYMinM;
+    double noiseBandYMaxM = params::channel::kNoiseBandYMaxM;
+    double noiseBandZMinM = params::channel::kNoiseBandZMinM;
+    double noiseBandZMaxM = params::channel::kNoiseBandZMaxM;
     double noiseBandStartS = params::channel::kNoiseBandStartS;
     double noiseBandEndS = params::channel::kNoiseBandEndS;
     double targetLifetimeFactor = params::price::kTargetLifetimeRunFactor;
@@ -86,6 +90,7 @@ struct ScenarioSettings
     bool logPackets = params::logging::kLogPackets;
     bool logEvents = params::logging::kLogEvents;
     bool logDecisions = params::logging::kLogDecisions;
+    bool logThetaTrace = false;            // theta_trace.csv: mean theta of the heads that have learned, every 100 s (CB only)
     bool measureCpu = false;               // time Select/OnSent/OnLabel (cost.csv); off by default, no overhead
     bool logCounterfactual = false;        // counterfactual.csv: would the frame have reached each eligible candidate? (simulator side)
     std::string shadowSelectorAttributes = ""; // attributes of the FixedWeight shadow selector used for counterfactual.csv ("" = physics weights)

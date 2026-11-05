@@ -24,12 +24,15 @@ struct NoiseBand
     double offsetDb = 0.0;
     double startS = 0.0;    ///< the band is on from this time ...
     double endS = -1.0;     ///< ... until this time (negative = until the end): a noise BURST (7 Nov 2026, change scenario)
+    double yMinM = -1.0e9, yMaxM = 1.0e9;   ///< 8 Nov 2026: the region may also be limited in y and in depth z (rain cell, surface shipping lane)
+    double zMinM = -1.0e9, zMaxM = 1.0e9;
 
     /// Change of the link SNR (dB, <= 0) for a frame received at 'rxPos' at time 'nowS'.
     double SnrChangeDb(const Vector& rxPos, double nowS = 0.0) const
     {
         const bool on = nowS >= startS && (endS < 0.0 || nowS < endS);
-        return (offsetDb != 0.0 && on && rxPos.x >= xMinM && rxPos.x < xMaxM) ? -offsetDb : 0.0;
+        const bool inside = rxPos.x >= xMinM && rxPos.x < xMaxM && rxPos.y >= yMinM && rxPos.y < yMaxM && rxPos.z >= zMinM && rxPos.z < zMaxM;
+        return (offsetDb != 0.0 && on && inside) ? -offsetDb : 0.0;
     }
 };
 

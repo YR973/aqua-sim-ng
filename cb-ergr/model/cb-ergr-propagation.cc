@@ -94,6 +94,14 @@ CbErgrPropagation::GetTypeId()
             .AddAttribute("NoiseBandXMaxM", "Noise band ends at this x (m).", DoubleValue(params::channel::kNoiseBandXMaxM),
                           MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandXMax, &CbErgrPropagation::GetNoiseBandXMax),
                           MakeDoubleChecker<double>())
+            .AddAttribute("NoiseBandYMinM", "Noise region: y from (m).", DoubleValue(params::channel::kNoiseBandYMinM),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandYMin, &CbErgrPropagation::GetNoiseBandYMin), MakeDoubleChecker<double>())
+            .AddAttribute("NoiseBandYMaxM", "Noise region: y to (m).", DoubleValue(params::channel::kNoiseBandYMaxM),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandYMax, &CbErgrPropagation::GetNoiseBandYMax), MakeDoubleChecker<double>())
+            .AddAttribute("NoiseBandZMinM", "Noise region: depth from (m).", DoubleValue(params::channel::kNoiseBandZMinM),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandZMin, &CbErgrPropagation::GetNoiseBandZMin), MakeDoubleChecker<double>())
+            .AddAttribute("NoiseBandZMaxM", "Noise region: depth to (m).", DoubleValue(params::channel::kNoiseBandZMaxM),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandZMax, &CbErgrPropagation::GetNoiseBandZMax), MakeDoubleChecker<double>())
             .AddAttribute("NoiseBandStartS", "The noise band switches on at this time (s).", DoubleValue(params::channel::kNoiseBandStartS),
                           MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandStart, &CbErgrPropagation::GetNoiseBandStart),
                           MakeDoubleChecker<double>(0.0))
@@ -134,7 +142,8 @@ CbErgrPropagation::CbErgrPropagation()
       m_extraLossProbability(0.0),
       m_idealLinks(params::channel::kIdealLinks),
       m_noiseBand{params::channel::kNoiseBandXMinM, params::channel::kNoiseBandXMaxM, params::channel::kNoiseBandOffsetDb,
-                  params::channel::kNoiseBandStartS, params::channel::kNoiseBandEndS}
+                  params::channel::kNoiseBandStartS, params::channel::kNoiseBandEndS,
+                  params::channel::kNoiseBandYMinM, params::channel::kNoiseBandYMaxM, params::channel::kNoiseBandZMinM, params::channel::kNoiseBandZMaxM}
 {
     m_extraLossDraw = CreateObject<UniformRandomVariable>();
     m_shadowing = CreateObject<GmShadowing>();
