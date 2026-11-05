@@ -219,6 +219,14 @@ The exact column names are in the header row of each file; Claude Code keeps thi
 
 ---
 
+## 5b. Added on 7 Nov 2026 (labels, counterfactual log, cost instrumentation)
+
+- **Labels** (`model/feedback-manager.cc`): an ACK timeout starts the retry but the record stays; late ACK or bitmap -> label; no evidence by expiry -> `LabelSource::Censored` (the learner never sees it). Switches: `KeepRecordAfterTimeout`, `CensoredLabels=Drop|Zero` (routing attributes). `decisions.csv` shows censored attempts as label -1.
+- **Selectors**: `QLearning` / `LfaQ` with `Legacy=true` = the old target (QlLegacy); `CbV5` `AckGate=Logit|ProbStd|ThompsonDisagree` (`DisagreeDraws`); `Oracle` `EnablePower`, `LambdaE`.
+- **Counterfactual log**: `--LogCounterfactual=true` writes `counterfactual.csv` (one row per DATA transmission: chosen forwarder, outcome, the FW shadow's choice, and for every eligible candidate R/P/C/H/D/O). Built from `LossBudget::WhyLostAt`. `scripts/counterfactual.py` aggregates it.
+- **Cost instrumentation**: `--MeasureCpu=true` (std::chrono around Select/OnSent/OnLabel); every run writes `cost.csv` (CPU, beacon byte split, neighbour rows, peak pending records, `sizeof`s, CB diagnostics), `resources.csv` (wall time, peak RSS) and, with `--ComputeRegret=true`, `regret_by_time.csv`. Reports: `scripts/perf.py` (Step 3 tables), `scripts/step4.py` (cost, memory, communication, learning, robustness), `scripts/opcount.py` (analytic operation counts and MCU estimates), `scripts/statlib.py` (t, TOST, Holm).
+- **Change scenarios**: `NoiseBandOffsetDb` with `NoiseBandStartS` / `NoiseBandEndS` (burst), `KillHeadsAtS` / `KillHeadsCells` (head failures).
+
 ## 6. Debugging: see what one node is thinking
 
 ```bash
