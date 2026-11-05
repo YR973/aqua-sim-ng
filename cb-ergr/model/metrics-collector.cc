@@ -833,6 +833,7 @@ MetricsCollector::WriteSummary()
          "decisions_scored,regret_mean,regret_mean_multi_viable,share_multi_viable";
     const FrameType energyTypes[] = {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election,
                                      FrameType::Handover, FrameType::Nack};
+    f << ",mac_drops,mac_deferrals";
     f << ",dead_declarations,dead_false_declarations,dead_by_quorum,dead_by_expiry,dead_heads_detected,dead_first_latency_mean_s";
     for (FrameType t : energyTypes)
     {
@@ -890,6 +891,7 @@ MetricsCollector::WriteSummary()
     {
         firstLatencySum += entry.second;
     }
+    f << ',' << m_macDrops << ',' << m_macDeferrals;
     f << ',' << m_deadDeclarations << ',' << m_deadFalse << ',' << m_deadByQuorum << ',' << m_deadByExpiry << ','
       << m_deadFirstLatencyS.size() << ','
       << (m_deadFirstLatencyS.empty() ? -1.0 : firstLatencySum / m_deadFirstLatencyS.size());

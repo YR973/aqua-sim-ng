@@ -1,0 +1,11 @@
+# Paper's load sweep (Fig.: PDR against the number of source nodes 15/30/45, plus our 10): P0 with the paper's settings.
+binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
+out_root: results/numsources-p0
+seeds: [101, 102, 103, 104, 105]
+# Paper reading (CONFIRM E26): PDR falls with the number of sources, 0.82 / 0.71 / 0.615 for 15 / 30 / 45 sources.
+common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/p0-published.txt, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false}
+runs:
+  - {name: P0-csma,       selector: RoundRobin}
+  - {name: P0-csma-ideal, selector: RoundRobin, settings: {IdealLinks: true, ShadowSigmaDb: 0}}
+sweeps:
+  - {factor: NumSources, values: [10, 15, 30, 45]}

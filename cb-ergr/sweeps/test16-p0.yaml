@@ -1,12 +1,15 @@
-# Spec test 16: PDR of P0 (ERGR-EMHC as published) against the node speed, compared with the trend of the paper's
-# Fig. 22 (CONFIRM E26: about 0.875 / 0.84 / 0.805 / 0.752 at 0 / 0.5 / 1.0 / 1.5 m/s).
+# Spec test 16: PDR of P0 (ERGR-EMHC as published) against the node speed, compared with the paper's Fig. 22
+# (CONFIRM E26: about 0.875 / 0.84 / 0.805 / 0.752 at 0 / 0.5 / 1.0 / 1.5 m/s).
+# 5 Nov 2026 settings: CSMA MAC, priority election timers (RandomTimers=false), paper radio. Aloha rows = MAC sensitivity.
 # Run:  python3 scripts/run_sweep.py sweeps/test16-p0.yaml --jobs 4
 binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
-out_root: results/test16
+out_root: results/test16-v2
 seeds: [101, 102, 103, 104, 105, 106, 107, 108]
 common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/p0-published.txt, SimTimeS: 2000, LogLinks: false, LogPackets: false, LogNodes: false}
 runs:
-  - {name: P0-ideal,   selector: RoundRobin, settings: {IdealLinks: true, ShadowSigmaDb: 0}}
-  - {name: P0-channel, selector: RoundRobin}
+  - {name: P0-csma,        selector: RoundRobin, settings: {Mac: Csma}}
+  - {name: P0-csma-ideal,  selector: RoundRobin, settings: {Mac: Csma, IdealLinks: true, ShadowSigmaDb: 0}}
+  - {name: P0-aloha,       selector: RoundRobin, settings: {Mac: Aloha}}
+  - {name: P0-aloha-ideal, selector: RoundRobin, settings: {Mac: Aloha, IdealLinks: true, ShadowSigmaDb: 0}}
 sweeps:
   - {factor: CurrentSpeed, values: [0, 0.5, 1.0, 1.5]}

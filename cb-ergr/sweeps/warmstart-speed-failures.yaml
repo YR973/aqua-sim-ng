@@ -1,12 +1,13 @@
+# NOTE: produced on 4-5 Nov 2026 with the OLD defaults (Aloha MAC, lean beacons off, no equal-Hmin fallback); kept for the record.
 # R13 warm start: cold CB, tuned CB, CB warm-started from the tuned FW weights and/or from the neighbouring cells' models,
 # against FW (tuned and physics) and the oracle, at current speed 0 and 1 and with head failures (10 cells lose a head at 2000 s).
-# Held-out training seeds 106-110 (tuning used 101-105). Base = configs/g-base.txt (N = 250, 4 sinks, 750 m cells, E0 10000 J, 0.004 pkt/s).
+# Held-out training seeds 106-110 (tuning used 101-105). Base = configs/g-sensitivity.txt (N = 250, 4 sinks, 750 m cells, E0 10000 J, 0.004 pkt/s).
 # Run:  python3 scripts/run_sweep.py sweeps/warmstart-speed-failures.yaml --jobs 4
 #       python3 scripts/analyse.py results/warmstart --kill-time 2000
 binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
 out_root: results/warmstart
 seeds: [106, 107, 108, 109, 110]
-common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/g-base.txt, SimTimeS: 4000, WarmupS: 500, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false, LogDecisions: true, KillHeadsCells: 10}
+common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/g-sensitivity.txt, SimTimeS: 4000, WarmupS: 500, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false, LogDecisions: true, KillHeadsCells: 10}
 runs:
   - {name: RR+FB,        selector: RoundRobin, attributes: "WithFeedback=true"}
   - {name: CB,           selector: CbV5}

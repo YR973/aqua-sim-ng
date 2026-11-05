@@ -2790,6 +2790,54 @@ class PublishedProtocolRunsAndIsDeterministic : public TestCase
     }
 };
 
+// Mac=Csma (listen-before-talk with backoff) and Mac=Aloha (Aqua-Sim broadcast MAC) both run the same scenario; CSMA counts
+// its deferrals, and the run stays deterministic.
+class CsmaAndAlohaMacsBothWork : public TestCase
+{
+  public:
+    CsmaAndAlohaMacsBothWork()
+        : TestCase("MAC: Csma defers on a busy channel and delivers; Aloha still works; same seed gives the same CSMA run")
+    {
+    }
+
+  private:
+    static ScenarioResult Run(const std::string& dir, const std::string& mac)
+    {
+        ScenarioSettings settings;
+        settings.mac = mac;
+        settings.outDir = dir;
+        settings.seed = 9;
+        settings.numNodes = 60;
+        settings.simTimeS = 700;
+        settings.warmupS = 300;
+        settings.pktRateHz = 0.05; // enough load for the channel to be busy now and then
+        settings.currentSpeed = 0.0;
+        ScenarioConfig config;
+        RegisterSettings(config, settings);
+        return RunScenario(settings, config);
+    }
+
+    void DoRun() override
+    {
+        std::string base = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-mac";
+        ScenarioResult csma = Run(base + "-c1", "Csma");
+        Run(base + "-c2", "Csma");
+        ScenarioResult aloha = Run(base + "-a", "Aloha");
+        NS_TEST_ASSERT_MSG_EQ((csma.packetsDelivered > 0 && aloha.packetsDelivered > 0), true, "both MACs deliver");
+        auto csmaRow = ReadCsv(base + "-c1/summary.csv")[0];
+        auto alohaRow = ReadCsv(base + "-a/summary.csv")[0];
+        NS_TEST_ASSERT_MSG_EQ((std::stod(csmaRow["mac_deferrals"]) > 0.0), true, "CSMA deferred at least once");
+        NS_TEST_ASSERT_MSG_EQ(std::stod(alohaRow["mac_deferrals"]), 0.0, "Aloha reports no CSMA deferrals");
+        NS_TEST_ASSERT_MSG_EQ((ReadFile(base + "-c1/packets.csv") == ReadFile(base + "-c2/packets.csv")), true,
+                              "CSMA is deterministic");
+        for (const char* s : {"-c1", "-c2", "-a"})
+        {
+            std::filesystem::remove_all(base + s);
+        }
+    }
+};
+
+
 class CbErgrTestSuite : public TestSuite
 {
   public:
@@ -2841,6 +2889,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new HeaderFirstReceiveSavesEnergyOnOverheardData, TestCase::QUICK);
         AddTestCase(new LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking, TestCase::QUICK);
         AddTestCase(new PowerLevelsChangeSuccessAndEnergy, TestCase::QUICK);
+        AddTestCase(new CsmaAndAlohaMacsBothWork, TestCase::QUICK);
         AddTestCase(new NewHeadStartsFromTheNeighbourCellsModel, TestCase::QUICK);
         AddTestCase(new PublishedGeometryHas32NeighboursAndBfsHmin, TestCase::QUICK);
         AddTestCase(new PublishedProtocolRunsAndIsDeterministic, TestCase::QUICK);

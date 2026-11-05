@@ -163,7 +163,7 @@ class ErgrEmhcRouting : public AquaSimRouting
     // Attributes
     double m_cellSizeM, m_boxSizeM, m_txRangeM;
     int m_headsPerCell;
-    bool m_faceOnly, m_strictProgress;
+    bool m_faceOnly, m_strictProgress, m_equalHminFallback;
     double m_beaconPeriodS, m_neighbourTimeoutBeacons;
     double m_electionPeriodS, m_electionBeta, m_electionSlotS, m_electionJitterS, m_electionOffsetPerCellS;
     double m_firstElectionS, m_hysteresisM;

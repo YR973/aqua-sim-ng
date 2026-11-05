@@ -9,6 +9,7 @@
 #include "ns3/cb-ergr-helper.h"
 #include "ns3/core-module.h"
 #include "ns3/current-drift-mobility.h"
+#include "ns3/csma-mac.h"
 #include "ns3/ergr-emhc-published.h"
 #include "ns3/ergr-emhc-routing.h"
 #include "ns3/localisation-noise.h"
@@ -34,6 +35,8 @@ namespace cbergr
 void
 RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
 {
+    c.Add("TargetLifetimeFactor", &s.targetLifetimeFactor, "CB energy price: target lifetime = factor x SimTimeS");
+    c.Add("Mac", &s.mac, "Csma (listen-before-talk with backoff, as in the paper) or Aloha (Aqua-Sim broadcast MAC)");
     c.Add("Protocol", &s.protocol, "G = improved ERGR-EMHC-g (default), P0 = ERGR-EMHC as published (round robin only)");
     c.Add("Selector", &s.selector, "Forwarding method: RoundRobin, CbV5, ...");
     c.Add("SelectorAttributes", &s.selectorAttributes, "Attributes of the selector: Name=value;Name=value");
@@ -196,7 +199,11 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
 
     AquaSimHelper asHelper = AquaSimHelper::Default();
     asHelper.SetChannel(channel);
-    asHelper.SetMac("ns3::AquaSimBroadcastMac");
+    if (s.mac != "Csma" && s.mac != "Aloha")
+    {
+        NS_FATAL_ERROR("Mac must be Csma or Aloha, got " << s.mac);
+    }
+    asHelper.SetMac(s.mac == "Csma" ? "ns3::cbergr::CsmaMac" : "ns3::AquaSimBroadcastMac");
     const bool publishedProtocol = (s.protocol == "P0");
     asHelper.SetRouting(publishedProtocol ? "ns3::cbergr::ErgrEmhcPublishedRouting" : "ns3::cbergr::ErgrEmhcRouting");
     CbErgrHelper::ConfigureHelper(asHelper, s.preambleS, s.initialEnergyJ, s.txPowerFullW, s.rxPowerW,
@@ -216,6 +223,7 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
 
     std::vector<Ptr<ErgrEmhcRouting>> routings;
     std::vector<Ptr<ErgrEmhcPublishedRouting>> publishedRoutings;
+    std::vector<Ptr<CsmaMac>> csmaMacs;
     std::vector<std::pair<uint16_t, Vector>> sinkTable;
     int64_t stream = 1;
     stream += propagation->AssignStreams(stream);
@@ -281,6 +289,10 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
             device->GetPhy()->EM()->SetEnergy(1e12);
         }
         device->GetMac()->AssignStreams(stream++);
+        if (Ptr<CsmaMac> csma = DynamicCast<CsmaMac>(device->GetMac()))
+        {
+            csmaMacs.push_back(csma);
+        }
 
         if (publishedProtocol)
         {
@@ -336,6 +348,11 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         else
         {
             selectorFactory.SetTypeId("ns3::cbergr::Selector" + s.selector);
+        }
+        if (s.selector == "CbV5")
+        {
+            // B7: the energy price spreads the battery over about twice the run length (explicit SelectorAttributes override).
+            selectorFactory.Set("TargetLifetimeS", DoubleValue(s.targetLifetimeFactor * s.simTimeS));
         }
         std::stringstream attrs(s.selectorAttributes);
         for (std::string item; std::getline(attrs, item, ';');)
@@ -420,6 +437,15 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
 
     // -------------------------------------------------------------- run ----
     Simulator::Schedule(Seconds(s.warmupS), &MetricsCollector::SnapshotEnergyAtWarmup, metrics);
+    Simulator::Schedule(Seconds(s.simTimeS), [csmaMacs, metrics]() {
+        uint64_t drops = 0, deferrals = 0;
+        for (const Ptr<CsmaMac>& m : csmaMacs)
+        {
+            drops += m->Drops();
+            deferrals += m->Deferrals();
+        }
+        metrics->SetMacStats(drops, deferrals);
+    });
     Simulator::Schedule(Seconds(s.simTimeS), &MetricsCollector::Finalize, metrics);
     Simulator::Stop(Seconds(s.simTimeS + 0.001));
 

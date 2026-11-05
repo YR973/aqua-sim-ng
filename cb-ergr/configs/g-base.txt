@@ -1,11 +1,22 @@
-# configs/g-base.txt: ERGR-EMHC-g runs (improved protocol). Both values are [CONFIRM] (CONFIRM E27, E28):
-# 10000 J keeps nodes alive over 10000 s; 0.004 pkt/s per node is the pilot's rate.
-InitialEnergyJ = 10000
-PktRatePerNodeHz = 0.004
-N = 250
-NumSinks = 4
+# configs/g-base.txt: ERGR-EMHC-g with the SAME radio, energy and traffic settings as P0, taken from the ERGR-EMHC paper
+# (Al-Salti et al. 2019, section 5), so that P0 -> ERGR-EMHC-g changes only the protocol (decision of 5 Nov 2026):
+# 17.8 kbit/s, 8 W Tx / 0.8 W Rx / 0.008 W idle, 300 J, 3 sinks, 300 nodes, 10 source nodes at 0.07 pkt/s each, 2000 s runs,
+# CSMA MAC. Protocol-specific: 750 m cells, k = 2 heads, lean beacons. Data starts at 300 s (the election start-up needs
+# ~55 s + 2 s x cell id) and the first 300 s are discarded (the paper discards 150 s).
+# The old low-rate setting (5 kbit/s, 2 W / 0.75 W, 10000 J, 0.004 pkt/s per node, all nodes sending) is configs/g-sensitivity.txt.
+N = 300
+NumSinks = 3
+NumSources = 10
+PktRatePerNodeHz = 0.07
+InitialEnergyJ = 300
+BitRateBps = 17800
+TxPowerFullW = 8
+RxPowerW = 0.8
+IdlePowerW = 0.008
 CellSizeM = 750
 HeadsPerCell = 2
 CurrentSpeed = 1.0
-SimTimeS = 20000
-WarmupS = 2000
+SimTimeS = 2000
+WarmupS = 300
+DataStartS = 300
+Mac = Csma

@@ -27,6 +27,7 @@ build_lib(
         model/feedback-manager.cc
         model/ergr-emhc-routing.cc
         model/ergr-emhc-published.cc
+        model/csma-mac.cc
         model/scenario-config.cc
         helper/cb-ergr-helper.cc
         helper/scenario-runner.cc
@@ -63,6 +64,7 @@ build_lib(
         model/recent-set.h
         model/ergr-emhc-routing.h
         model/ergr-emhc-published.h
+        model/csma-mac.h
         model/scenario-config.h
         helper/cb-ergr-helper.h
         helper/scenario-runner.h

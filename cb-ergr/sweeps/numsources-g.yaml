@@ -1,0 +1,12 @@
+# Same load sweep for ERGR-EMHC-g (configs/g-base.txt = the paper's settings): round robin, RR with feedback, FW, oracle.
+binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
+out_root: results/numsources-g
+seeds: [101, 102, 103, 104, 105]
+common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/g-base.txt, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false}
+runs:
+  - {name: G-RR,      selector: RoundRobin}
+  - {name: G-RR+FB,   selector: RoundRobin, attributes: "WithFeedback=true"}
+  - {name: G-FWphys,  selector: FixedWeight}
+  - {name: G-Oracle,  selector: Oracle}
+sweeps:
+  - {factor: NumSources, values: [10, 15, 30, 45]}

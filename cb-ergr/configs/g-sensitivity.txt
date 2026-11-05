@@ -1,0 +1,17 @@
+# configs/g-sensitivity.txt: the spec's own low-rate setting for ERGR-EMHC-g, kept as SENSITIVITY runs only (decision of
+# 5 Nov 2026): 5 kbit/s, 2 W Tx / 0.75 W Rx, 10000 J, 0.004 pkt/s from every node, 4 sinks, N = 250.
+N = 250
+NumSinks = 4
+NumSources = 0
+PktRatePerNodeHz = 0.004
+InitialEnergyJ = 10000
+BitRateBps = 5000
+TxPowerFullW = 2
+RxPowerW = 0.75
+IdlePowerW = 0.008
+CellSizeM = 750
+HeadsPerCell = 2
+CurrentSpeed = 1.0
+SimTimeS = 20000
+WarmupS = 2000
+DataStartS = 300

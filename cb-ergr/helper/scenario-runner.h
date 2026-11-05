@@ -20,6 +20,8 @@ namespace cbergr
 struct ScenarioSettings
 {
     // run
+    double targetLifetimeFactor = params::price::kTargetLifetimeRunFactor;
+    std::string mac = params::mac::kMac;   // "Csma" or "Aloha"
     std::string protocol = "G";            // "G" = ERGR-EMHC-g, "P0" = ERGR-EMHC as published
     std::string selector = "RoundRobin";
     std::string flags = "";

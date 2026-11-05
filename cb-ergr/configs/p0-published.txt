@@ -1,5 +1,8 @@
 # configs/p0-published.txt: "P0" = ERGR-EMHC as published (Al-Salti et al. 2019), the reference of test 16.
-# Setup of the paper's section 5 (CONFIRM E26/E27); everything marked [CONFIRM] in params.h namespace p0 is a stand-in.
+# Setup of the paper's section 5: 3 x 3 x 3 km, R = 1.5 km, 300 nodes, 3 sinks, 10 sources x 0.07 pkt/s, 17.8 kbit/s,
+# 8 W / 0.8 W / 0.008 W, 300 J, CSMA-based MAC, 2000 s with 150 s discarded at the start. Cells of R/(2 sqrt 3) = 433 m,
+# 32 neighbour cells, priority election timers (RandomTimers=false: the published eq. 4). Values the paper does not give are
+# [CONFIRM] in params.h namespace p0 (CONFIRM E29).
 Protocol = P0
 Selector = RoundRobin
 CellSizeM = 433.0127
@@ -12,7 +15,7 @@ SimTimeS = 2000
 WarmupS = 150
 DataStartS = 100
 CurrentSpeed = 1.0
-# The paper's radio (Al-Salti et al. §5): 17.8 kbit/s, Tx 8 W, Rx 0.8 W (CONFIRM E26). Our own spec uses 5 kbit/s, 2 W, 0.75 W.
 BitRateBps = 17800
 TxPowerFullW = 8
 RxPowerW = 0.8
+Mac = Csma

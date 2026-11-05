@@ -70,6 +70,9 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("FaceOnly", "Only the 6 face-adjacent cells count as neighbours.",
                           BooleanValue(params::grid::kFaceOnly),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_faceOnly), MakeBooleanChecker())
+            .AddAttribute("EqualHminFallback", "With no strictly better forwarder, allow heads of equal Hmin while Hpkt allows.",
+                          BooleanValue(params::grid::kEqualHminFallback),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_equalHminFallback), MakeBooleanChecker())
             .AddAttribute("StrictProgress", "Require a candidate to be closer in hops or shallower (loop guard).",
                           BooleanValue(params::grid::kStrictProgress),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_strictProgress), MakeBooleanChecker())
@@ -184,6 +187,7 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_headsPerCell(params::grid::kHeadsPerCell),
       m_faceOnly(params::grid::kFaceOnly),
       m_strictProgress(params::grid::kStrictProgress),
+      m_equalHminFallback(params::grid::kEqualHminFallback),
       m_beaconPeriodS(params::timers::kBeaconPeriodS),
       m_neighbourTimeoutBeacons(params::timers::kNeighbourTimeoutBeacons),
       m_electionPeriodS(params::timers::kElectionPeriodS),
@@ -995,35 +999,55 @@ ErgrEmhcRouting::OriginatePacket()
 std::vector<Candidate>
 ErgrEmhcRouting::GetEligible(const HeldPacket& pkt, Time now) const
 {
-    std::vector<Candidate> eligible;
-    std::vector<Candidate> suspects;
     Vector myPos = EstimatedPosition();
-    for (const auto& entry : m_table.Rows())
+    // Pass 0: the spec rule. Pass 1 (only if pass 0 found nothing): heads with the SAME Hmin as mine, like the paper's NG2T,
+    // while the hop budget still allows (the hop costs one unit of Hpkt, so Hmin_j < Hpkt).
+    for (int pass = 0; pass < (m_equalHminFallback ? 2 : 1); ++pass)
     {
-        const NeighbourEntry& row = entry.second;
-        if (row.id == m_id || static_cast<int32_t>(row.id) == pkt.prevHop || pkt.excluded.count(row.id))
+        std::vector<Candidate> eligible;
+        std::vector<Candidate> suspects;
+        for (const auto& entry : m_table.Rows())
         {
-            continue;
+            const NeighbourEntry& row = entry.second;
+            if (row.id == m_id || static_cast<int32_t>(row.id) == pkt.prevHop || pkt.excluded.count(row.id))
+            {
+                continue;
+            }
+            bool inG1 = row.isSink || (row.isHead && Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly));
+            if (!inG1 || row.hmin > pkt.hpkt)
+            {
+                continue; // spec §5.1: Hmin_j <= Hpkt
+            }
+            Vector predicted = row.PredictedPos(now);
+            if (Distance(predicted, myPos) > m_txRangeM)
+            {
+                continue; // K§2.1 predicted distance <= R
+            }
+            if (pass == 0)
+            {
+                if (m_strictProgress && !row.isSink && !(row.hmin < m_hmin || predicted.z < myPos.z))
+                {
+                    continue; // K§2.1 loop guard: closer in hops or shallower
+                }
+            }
+            else if (row.isSink || row.hmin != m_hmin || row.hmin >= pkt.hpkt)
+            {
+                continue; // fallback: equal Hmin only, and only while Hpkt allows another hop
+            }
+            // D§3 P4: a suspect forwarder is skipped for one beacon interval ...
+            (IsSuspect(row.id, now) ? suspects : eligible).push_back(Candidate{row.id, &row});
         }
-        bool inG1 = row.isSink || (row.isHead && Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly));
-        if (!inG1 || row.hmin > pkt.hpkt)
+        // ... but it is still better than no forwarder at all: use suspects only as a last resort.
+        if (!eligible.empty())
         {
-            continue; // spec §5.1: Hmin_j <= Hpkt
+            return eligible; // each list is sorted by id (map order)
         }
-        Vector predicted = row.PredictedPos(now);
-        if (Distance(predicted, myPos) > m_txRangeM)
+        if (!suspects.empty())
         {
-            continue; // K§2.1 predicted distance <= R
+            return suspects;
         }
-        if (m_strictProgress && !row.isSink && !(row.hmin < m_hmin || predicted.z < myPos.z))
-        {
-            continue; // K§2.1 loop guard: closer in hops or shallower
-        }
-        // D§3 P4: a suspect forwarder is skipped for one beacon interval ...
-        (IsSuspect(row.id, now) ? suspects : eligible).push_back(Candidate{row.id, &row});
     }
-    // ... but it is still better than no forwarder at all: use suspects only as a last resort.
-    return eligible.empty() ? suspects : eligible; // each list is sorted by id (map order)
+    return {};
 }
 
 void
@@ -1093,6 +1117,30 @@ ErgrEmhcRouting::HandOffToHead(HeldPacket pkt)
     }
     if (heads.empty())
     {
+        if (m_metrics->GetConfig().logEvents)
+        {
+            // Diagnostic for "member without a usable head": what does the table say about my own cell?
+            int headRowsHere = 0, headRowsHereUnknownHmin = 0, rowsHere = 0, headRowsElsewhere = 0;
+            for (const auto& entry : m_table.Rows())
+            {
+                const NeighbourEntry& row = entry.second;
+                if (row.cellId == m_cell)
+                {
+                    rowsHere++;
+                    headRowsHere += row.isHead ? 1 : 0;
+                    headRowsHereUnknownHmin += (row.isHead && row.hmin == kUnknownHmin) ? 1 : 0;
+                }
+                else
+                {
+                    headRowsElsewhere += row.isHead ? 1 : 0;
+                }
+            }
+            std::ostringstream d;
+            d << "cell=" << m_cell << " rowsHere=" << rowsHere << " headRowsHere=" << headRowsHere
+              << " headRowsUnknownHmin=" << headRowsHereUnknownHmin << " headRowsElsewhere=" << headRowsElsewhere
+              << " rows=" << m_table.Size();
+            m_metrics->OnEvent(m_id, "NO_HEAD_FOR_HANDOFF", d.str());
+        }
         HandleVoid(pkt);
         return;
     }

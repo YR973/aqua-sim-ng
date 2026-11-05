@@ -163,6 +163,12 @@ class MetricsCollector : public Object
     /// A node declared 'subject' dead (by quorum or by table expiry). Ground truth is read here, for reporting only:
     /// the subject is truly dead if its battery reached 0 earlier; latency = declaration time - death time.
     void OnDeadDeclared(uint32_t node, uint32_t subject, bool byQuorum);
+    /// MAC counters at the end of the run (CsmaMac only): frames dropped (queue full or too many busy deferrals), deferrals.
+    void SetMacStats(uint64_t drops, uint64_t deferrals)
+    {
+        m_macDrops = drops;
+        m_macDeferrals = deferrals;
+    }
 
     // --- Final output ---
     /// Close open head tenures, classify packets, run consistency checks, write all CSVs.
@@ -289,6 +295,7 @@ class MetricsCollector : public Object
     /// counted here, and header-first receive (N-A) is not subtracted for overheard data.
     std::array<double, kNumFrameTypes> m_txEnergyByType{}, m_rxEnergyByType{};
     // Dead-head declarations (ground truth used for reporting only).
+    uint64_t m_macDrops = 0, m_macDeferrals = 0;
     uint32_t m_deadDeclarations = 0, m_deadFalse = 0, m_deadByQuorum = 0, m_deadByExpiry = 0;
     std::map<uint32_t, double> m_deadFirstLatencyS;   ///< truly dead subject -> latency of the first declaration anywhere
     uint64_t m_electionsAfterWarmup = 0;

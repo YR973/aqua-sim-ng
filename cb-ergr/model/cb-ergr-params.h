@@ -35,6 +35,7 @@ constexpr double kCellSizeM = 750.0;     // [DESIGN] D§3 P1 (4^3 cells); 600 m 
 constexpr double kPublishedCellSizeM = 866.0; // [CONFIRM] A1: P0 uses R/sqrt(3) ~ 866 m
 constexpr int kHeadsPerCell = 2;         // [DESIGN] D§3 P2; P0 uses 1
 constexpr bool kFaceOnly = false;        // [DESIGN] K§2.1: false = 26 adjacent cells
+constexpr bool kEqualHminFallback = true; // [DESIGN] 5 Nov 2026 (E11): with no strictly better forwarder, an equal-Hmin head (like NG2T) may be used while Hpkt allows
 constexpr bool kStrictProgress = true;   // [DESIGN] K§2.1 loop guard: candidate must be closer in hops or shallower
 } // namespace grid
 
@@ -127,7 +128,7 @@ constexpr double kAckSoundSpeedMps = 1500.0; // [SPEC] S§9.1 propagation speed 
 constexpr bool kRetriesAlwaysAck = true;  // [SPEC] S§9.12 retries always request an ACK
 constexpr int kSuspectTimeouts = 2;       // [DESIGN] D§3 P4 consecutive ACK timeouts before a forwarder is suspected
 constexpr double kHandoverKeepS = 400.0;  // a received handover model waits this long for its node to become head
-constexpr bool kLeanBeacons = false;      // [DESIGN] D§4.2 N-C; turn on for ERGR-EMHC-g after calibration (Rx > 50% of energy)
+constexpr bool kLeanBeacons = true;       // [DESIGN] D§4.2 N-C, default ON since 5 Nov 2026 (beacons are ~28% of airtime); LeanBeacons=false is the leave-one-out run
 constexpr double kTrickleMaxFactor = 2.0; // [CONFIRM] N-C: a stable head's beacon interval grows to at most this x BeaconPeriodS (design: 2-4)
 constexpr double kPreElectionLeadS = 8.0; // N-C: members announce themselves this long before each election round
 constexpr bool kHeaderFirstRx = false;    // [DESIGN] D§4.2 N-A
@@ -135,6 +136,20 @@ constexpr bool kAutoElection = true;     // false only in tests that force the r
 constexpr int kDuplicateCapacity = 1024; // [SPEC] S§7 duplicate filter size
 constexpr double kDuplicateTtlS = 600.0; // [SPEC] S§7 duplicate filter lifetime
 } // namespace timers
+
+// ------------------------------------------------------------------ MAC ----
+// Mac=Csma (listen-before-talk with random backoff; the paper used a CSMA-based MAC) or Mac=Aloha (Aqua-Sim's
+// AquaSimBroadcastMac: it checks the channel too, but backs off at most 0.1 s four times and then silently drops the frame).
+namespace mac
+{
+constexpr const char* kMac = "Csma";      // [PAPER] "a CSMA-based MAC protocol" (Al-Salti et al. 2019, section 5); Aloha = robustness runs
+constexpr double kSlotS = 0.1;            // [CONFIRM] backoff slot
+constexpr int kCwMin = 8;                 // [CONFIRM] initial contention window (slots) for data, beacons, elections, handovers
+constexpr int kCwMax = 128;               // [CONFIRM] largest contention window
+constexpr int kCwControl = 2;             // [CONFIRM] ACKs and NACKs wait at most this many slots (they have a timer running)
+constexpr int kMaxAttempts = 16;          // [CONFIRM] busy-channel deferrals before a frame is dropped
+constexpr int kQueueLimit = 64;           // [CONFIRM] frames waiting in the MAC
+} // namespace mac
 
 // ------------------------------------------------------- dead-head quorum ----
 // D§3 P4: a head is declared dead when its beacon is overdue past its advertised next-beacon time + guard AND a quorum of
@@ -215,7 +230,8 @@ namespace price
 {
 constexpr double kLambdaInit = 0.25;     // [SPEC] S§8.9
 constexpr double kEta = 20.0;            // [SPEC] S§8.9
-constexpr double kTargetLifetimeS = 1e5; // [CONFIRM] B7
+constexpr double kTargetLifetimeS = 1e5; // [CONFIRM] B7: only the attribute default; scenarios set 2 x run length (below)
+constexpr double kTargetLifetimeRunFactor = 2.0; // [DECIDED 5 Nov 2026] TargetLifetimeS = this x SimTimeS in every scenario
 } // namespace price
 
 // ------------------------------------------------------------- sharing ----
@@ -242,7 +258,7 @@ constexpr double kUpdatePeriodS = 500.0;   // [PAPER] Table 3 update (Hello) per
 constexpr double kNewElectionS = 400.0;    // [PAPER] Table 3 new election timer
 constexpr double kEnergyThresholdJ = 10.0; // [PAPER] Table 3 epsilon: a head below it sends Retire
 constexpr double kPriorityWeight = 0.5;    // [CONFIRM] w in P(i); "w in [0, 1]", value not given
-constexpr bool kRandomTimers = true;       // [CONFIRM] GBPR-style random election timers (the paper's eq. 4 uses the priority P(i))
+constexpr bool kRandomTimers = false;      // [PAPER] eq. 4: timer = iPeriod x P(i). (The 6 Nov "random timers" instruction was withdrawn on 5 Nov: P0 is the published protocol unchanged.)
 constexpr double kPositionCheckS = 5.0;    // [CONFIRM] how often a node checks whether it left its cell
 constexpr int kVoidRetryLimit = 3;         // [CONFIRM] NegAck-triggered re-selections
 constexpr double kNackProcS = 0.05;        // [CONFIRM] T_processing in eq. 10
