@@ -535,6 +535,35 @@ MetricsCollector::WriteDecisionLine(uint32_t node,
 // ----------------------------------------------------------------- events --
 
 void
+MetricsCollector::OnCoverageSample(uint32_t occupiedCells, uint32_t headedCells, uint32_t nodes, uint32_t nodesInHeadlessCells)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    m_covOccupied += occupiedCells;
+    m_covHeaded += headedCells;
+    m_covNodes += nodes;
+    m_covNodesHeadless += nodesInHeadlessCells;
+}
+
+void
+MetricsCollector::OnNoHeadGiveUp(uint32_t node, uint16_t cell)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    m_noHeadGiveUps++;
+    const bool headExists = m_cellHasHead && m_cellHasHead(cell);
+    if (headExists)
+    {
+        m_noHeadGiveUpsWithHead++;
+    }
+    OnEvent(node, "NO_HEAD_GIVE_UP", "cell=" + std::to_string(cell) + " cellHasHead=" + (headExists ? "1" : "0"));
+}
+
+void
 MetricsCollector::OnDeadDeclared(uint32_t node, uint32_t subject, bool byQuorum)
 {
     if (!Counting())
@@ -833,7 +862,7 @@ MetricsCollector::WriteSummary()
          "decisions_scored,regret_mean,regret_mean_multi_viable,share_multi_viable";
     const FrameType energyTypes[] = {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election,
                                      FrameType::Handover, FrameType::Nack};
-    f << ",mac_drops,mac_deferrals";
+    f << ",mac_drops,mac_deferrals,solicits_sent,solicits_answered,nohead_giveups,nohead_giveups_cell_had_head,cells_with_head_share,nodes_in_headless_cells_share";
     f << ",dead_declarations,dead_false_declarations,dead_by_quorum,dead_by_expiry,dead_heads_detected,dead_first_latency_mean_s";
     for (FrameType t : energyTypes)
     {
@@ -891,7 +920,8 @@ MetricsCollector::WriteSummary()
     {
         firstLatencySum += entry.second;
     }
-    f << ',' << m_macDrops << ',' << m_macDeferrals;
+    f << ',' << m_macDrops << ',' << m_macDeferrals << ',' << m_solicitsSent << ',' << m_solicitAnswered << ',' << m_noHeadGiveUps << ',' << m_noHeadGiveUpsWithHead
+      << ',' << (m_covOccupied > 0 ? m_covHeaded / m_covOccupied : -1.0) << ',' << (m_covNodes > 0 ? m_covNodesHeadless / m_covNodes : -1.0);
     f << ',' << m_deadDeclarations << ',' << m_deadFalse << ',' << m_deadByQuorum << ',' << m_deadByExpiry << ','
       << m_deadFirstLatencyS.size() << ','
       << (m_deadFirstLatencyS.empty() ? -1.0 : firstLatencySum / m_deadFirstLatencyS.size());

@@ -386,6 +386,52 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         metrics->RegisterNode(node->GetId(), isSink, device->GetPhy()->EM());
         routings.push_back(routing);
     }
+    metrics->SetCellHeadProbe([routings](uint16_t cell) {
+        for (const Ptr<ErgrEmhcRouting>& r : routings)
+        {
+            if (!r->IsSink() && r->IsAlive() && r->IsHead() && r->CellId() == cell)
+            {
+                return true;
+            }
+        }
+        return false;
+    });
+    // Ground-truth head coverage, sampled every 25 s (reporting only).
+    auto sampleCoverage = std::make_shared<std::function<void()>>();
+    *sampleCoverage = [routings, metrics, sampleCoverage]() {
+        std::map<uint16_t, std::pair<int, int>> cells; // cell -> (live ordinary nodes, live heads)
+        for (const Ptr<ErgrEmhcRouting>& r : routings)
+        {
+            if (!r->IsSink() && r->IsAlive())
+            {
+                auto& c = cells[r->CellId()];
+                c.first++;
+                c.second += r->IsHead() ? 1 : 0;
+            }
+        }
+        uint32_t headed = 0, nodes = 0, headless = 0;
+        for (const auto& c : cells)
+        {
+            nodes += c.second.first;
+            headed += c.second.second > 0 ? 1 : 0;
+            headless += c.second.second > 0 ? 0 : c.second.first;
+        }
+        metrics->OnCoverageSample(cells.size(), headed, nodes, headless);
+        if (metrics->GetConfig().logEvents)
+        {
+            std::ostringstream d;
+            for (const auto& c : cells)
+            {
+                if (c.second.second == 0)
+                {
+                    d << c.first << ":" << c.second.first << " ";
+                }
+            }
+            metrics->OnEvent(0, "HEADLESS_CELLS", d.str());
+        }
+        Simulator::Schedule(Seconds(25.0), *sampleCoverage);
+    };
+    Simulator::Schedule(Seconds(25.0), *sampleCoverage);
     for (Ptr<ErgrEmhcRouting>& routing : routings)
     {
         routing->Start();

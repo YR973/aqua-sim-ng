@@ -158,6 +158,7 @@ class ErgrElectionHeader : public Header
         Hello = 1,
         Retire = 2,
         Exit = 3,    ///< P0: a node leaves its cell; scoreQ carries the cell it moves to
+        Solicit = 5,   ///< a member without a head row asks the heads of cell cellId to beacon (nodeId = asker)
         DeadReport = 4 ///< quorum dead-head detection: nodeId = reporter, cellId = the silent head's cell, scoreQ = the silent head's id
     };
 

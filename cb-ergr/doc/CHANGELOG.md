@@ -2,6 +2,26 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-06 10:00 — Step 1 (E34): members always know their cell's head; the real cause was headless cells
+- What:
+  1. **Head solicitation** (`Solicit=true`, `params::solicit`): a member with no usable head row of its own cell HOLDS its packet (up to 32), broadcasts a SOLICIT (election-kind frame, 9 B, `ErgrElectionHeader::Solicit`) every 4 s, up to 3 asks; heads of that cell answer with a beacon after U(0, 1 s) (at most once per 2 s); any beacon from an own-cell head (or the member becoming head itself) releases the held packets. After the third unanswered ask it starts an election round and only then gives the packets up. Events `SOLICIT`, `SOLICIT_ANSWER`, `HEAD_FOUND_AFTER_SOLICIT`, `NO_HEAD_GIVE_UP`; summary columns `solicits_sent, solicits_answered, nohead_giveups, nohead_giveups_cell_had_head`.
+  2. **Ground-truth head coverage** (reporting only): `cells_with_head_share`, `nodes_in_headless_cells_share` (sampled every 25 s), event `HEADLESS_CELLS`.
+  3. **Two election fixes**, found by tracing the cells that stayed headless (cell 46 of seed 101 had 9 nodes and no head for 1800 s):
+     * a head retired at an election round when it merely ranked below k in its own table; the better-ranked nodes do not necessarily claim (they claim only in a round they run themselves), and rows of nodes that have left the cell still rank above everybody. Now it retires only if it hears >= k better HEADS (the spec rule D§3 P3 step 3);
+     * a member ranked below k never claimed, so when every member saw 5-7 stale "better" rows nobody claimed. Now it claims in its own later slot (rank - 1 s) if fewer than k heads of the cell have been heard by then;
+     * a member that knows no head of its cell (heads left, never elected) starts an election round at its next beacon tick (debounced).
+  4. Test `E34: no packet dies at the source for 'no own head' while the cell has a head...` (120 nodes, speed 1, lean beacons on: zero ground-truth-wrong give-ups, >= 90% of cells headed, < 10% of nodes headless); 49 cases pass.
+- Why: user request of 6 Nov 2026, step 1.
+- Effect on results: every ERGR-EMHC-g number from before this entry is superseded (lean beacons on, N = 300, 10 sources, Csma, paper radio).
+- Spec/design deviation: the election repairs follow D§3 P3 more closely (step-down by heard heads); the back-up claim and the "no head in my cell" trigger are additions.
+- Result (RR, `configs/g-base.txt`, 20 training seeds 101-120; `results/reference/e34/`): the diagnosis in the 5 Nov entry was WRONG in one respect: the solicit alone changed little, because in 99% of the give-ups the cell really had no live head (ground truth). Before: 43% of nodes lived in headless cells (lean on); after the election fixes 0.3%.
+  | | PDR | hop success | cells with a head | nodes in headless cells | give-ups for "no head" | of which the cell had a head |
+  |---|---|---|---|---|---|---|
+  | RR, lean beacons on | **0.243 +- 0.022** (was 0.156 with 5 seeds) | 0.616 | 0.995 | 0.003 | 1.35 per run | 0.30 per run |
+  | RR, lean beacons off | 0.165 +- 0.020 | 0.516 | 0.996 | 0.001 | 0.15 | 0.10 |
+  So E34 is closed for its stated purpose (a member finds the head when the cell has one: 0.3 exceptions per run are heads elected during the wait), but PDR is still far below P0 (0.43) and below the paper: the next steps look for the other losses.
+- From now on every compared number uses 20 seeds: training seeds 101-120 (the test seeds 1-20 stay untouched).
+
 ## 2026-11-05 18:00 — Step C: warm start check, ExplorationScale tuning, ProbStd ACK gate, heterogeneous scenario, density transfer
 - What:
   * **C9 warm start:** checked, no code change needed. `PriorWeights` already sets BOTH `thetaHat` and the cell prior `thetaCell` (`selector-cb-v5.cc` SetServices: `SetCellPrior(w); SetTheta(w)`), and `BeginDecision` decays theta toward `thetaCell`. The only later writer of the cell prior is `RefreshCellPrior`, which replaces it by the mean of accepted same-cell peers' models (themselves warm). So the explanation "forgetting decays toward zero" does not hold; a different reason is likely (see result 1).

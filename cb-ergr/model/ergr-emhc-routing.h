@@ -28,6 +28,7 @@
 #include "ns3/random-variable-stream.h"
 
 #include <functional>
+#include <deque>
 #include <map>
 #include <memory>
 #include <set>
@@ -142,6 +143,13 @@ class ErgrEmhcRouting : public AquaSimRouting
     void NoteForwarderAlive(uint16_t fwdId);
     bool IsSuspect(uint16_t fwdId, Time now) const;
 
+    // --- Head solicitation (E34) ---
+    void QueueForHead(const HeldPacket& pkt);
+    void SendSolicit();
+    void SolicitTick();
+    void FlushWaitingForHead();
+    bool KnowsHeadOfMyCell() const;
+
     // --- Quorum dead-head detection (D§3 P4) ---
     void DeadCheckTick();
     void SendDeadReport(uint16_t subject);
@@ -218,6 +226,14 @@ class ErgrEmhcRouting : public AquaSimRouting
     uint32_t m_headRoundRobin = 0;
     std::map<uint16_t, int> m_consecutiveTimeouts;   ///< per forwarder: ACK timeouts since the last sign of life
     std::map<uint16_t, Time> m_suspectUntil;          ///< forwarders excluded until this time (D§3 P4)
+    // Head solicitation
+    bool m_solicit;
+    double m_solicitWaitS, m_solicitReplyJitterS, m_solicitReplyMinGapS;
+    int m_solicitRetries, m_solicitMaxWaiting;
+    std::deque<HeldPacket> m_waitingForHead;
+    int m_solicitAsks = 0;
+    Time m_lastSolicitReply = Seconds(-1000);
+    EventId m_solicitTimer;
     // Quorum dead-head detection
     bool m_quorumDetection;
     double m_deadCheckPeriodS, m_deadGuardS, m_deadReportTtlS, m_deadReportRepeatS, m_deadReportJitterS;

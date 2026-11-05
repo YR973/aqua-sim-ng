@@ -1,0 +1,9 @@
+# E34 fix check: ERGR-EMHC-g round robin with the paper's settings, 10 sources, 20 training seeds 101-120 (from 6 Nov 2026 all
+# compared numbers use 20 seeds; the test seeds 1-20 stay untouched).
+binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
+out_root: results/rr-g-e34
+seeds: [101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120]
+common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/g-base.txt, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false}
+runs:
+  - {name: G-RR-lean,    selector: RoundRobin}
+  - {name: G-RR-nolean,  selector: RoundRobin, settings: {LeanBeacons: false}}

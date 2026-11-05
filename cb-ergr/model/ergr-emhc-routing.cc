@@ -142,6 +142,19 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("PreElectionLeadS", "Members announce themselves this long before an election round (lean mode).",
                           DoubleValue(params::timers::kPreElectionLeadS),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_preElectionLeadS), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("Solicit", "E34: a member without a head row holds its packet and asks the heads of its cell to beacon.",
+                          BooleanValue(params::solicit::kEnabled), MakeBooleanAccessor(&ErgrEmhcRouting::m_solicit),
+                          MakeBooleanChecker())
+            .AddAttribute("SolicitWaitS", "Wait for an answer before asking again (s).", DoubleValue(params::solicit::kWaitS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_solicitWaitS), MakeDoubleChecker<double>(0.1))
+            .AddAttribute("SolicitRetries", "Asks before the held packets are given up.", UintegerValue(params::solicit::kRetries),
+                          MakeUintegerAccessor(&ErgrEmhcRouting::m_solicitRetries), MakeUintegerChecker<int>(1))
+            .AddAttribute("SolicitReplyJitterS", "A head waits U(0, this) before answering a solicit (s).",
+                          DoubleValue(params::solicit::kReplyJitterS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_solicitReplyJitterS), MakeDoubleChecker<double>(0.0))
+            .AddAttribute("SolicitReplyMinGapS", "A head answers at most once in this time (s).",
+                          DoubleValue(params::solicit::kReplyMinGapS),
+                          MakeDoubleAccessor(&ErgrEmhcRouting::m_solicitReplyMinGapS), MakeDoubleChecker<double>(0.0))
             .AddAttribute("QuorumDetection", "D§3 P4: declare a silent head dead after its beacon is overdue and a quorum agrees.",
                           BooleanValue(params::deadhead::kQuorumDetection),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_quorumDetection), MakeBooleanChecker())
@@ -208,6 +221,12 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_ackGuardS(params::timers::kAckGuardS),
       m_phyRxDelayAirtimes(params::timers::kPhyRxDelayAirtimes),
       m_retriesAlwaysAck(params::timers::kRetriesAlwaysAck),
+      m_solicit(params::solicit::kEnabled),
+      m_solicitWaitS(params::solicit::kWaitS),
+      m_solicitReplyJitterS(params::solicit::kReplyJitterS),
+      m_solicitReplyMinGapS(params::solicit::kReplyMinGapS),
+      m_solicitRetries(params::solicit::kRetries),
+      m_solicitMaxWaiting(params::solicit::kMaxWaiting),
       m_quorumDetection(params::deadhead::kQuorumDetection),
       m_deadCheckPeriodS(params::deadhead::kCheckPeriodS),
       m_deadGuardS(params::deadhead::kGuardS),
@@ -515,6 +534,12 @@ ErgrEmhcRouting::BeaconTick()
     UpdateOwnCell();
     ExpireNeighbours();
     RecomputeHmin();
+    if (m_solicit && !m_isSink && !m_isHead && m_autoElection && CountHeadsInCell() == 0 &&
+        Simulator::Now().GetSeconds() > m_firstElectionS + m_electionOffsetPerCellS * m_cell)
+    {
+        // E34: my cell has no head that I know of (heads left, or never elected): run an election round (debounced).
+        StartElectionRound("no head in my cell", false);
+    }
     if (!m_leanBeacons)
     {
         SendBeacon();
@@ -722,6 +747,10 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
     {
         m_selector->OnKnownChange(ChangeEvent::HeadChangedInNeighbourCell, Simulator::Now());
     }
+    if (!m_waitingForHead.empty() && entry.isHead && entry.cellId == m_cell && entry.hmin != kUnknownHmin)
+    {
+        Simulator::ScheduleNow(&ErgrEmhcRouting::FlushWaitingForHead, this);
+    }
     bool headLeftMyCell = wasHeadInMyCell && (!entry.isHead || entry.cellId != m_cell);
     if (headLeftMyCell && !m_isSink)
     {
@@ -848,13 +877,28 @@ ErgrEmhcRouting::StartElectionRound(const char* reason, bool firstElection)
     m_lastElectionTrigger = now;
 
     int rank = RankInCell(firstElection);
+    if (m_metrics->GetConfig().logEvents)
+    {
+        m_metrics->OnEvent(m_id, "ELECTION_ROUND",
+                           std::string(reason) + " cell=" + std::to_string(m_cell) + " rank=" + std::to_string(rank));
+    }
     if (rank > m_headsPerCell)
     {
+        // D§3 P3 step-down rule: a head retires when it hears >= k BETTER HEADS, not merely when k better-ranked members
+        // exist in its table: those members may not claim (they only claim in a round they run themselves, and rows of
+        // nodes that have left are stale). Retiring on rank alone left cells with no head at all (6 Nov 2026, see CHANGELOG).
         if (m_isHead)
         {
-            BecomeMember("outranked at election");
+            if (CountBetterHeadsInCell() >= m_headsPerCell)
+            {
+                BecomeMember("outranked at election");
+            }
+            return;
         }
-        return;
+        // A member ranked below k does not return: ranks come from beacon rows that can be stale (nodes that have left the
+        // cell still rank above everybody), and in the 6 Nov 2026 run a cell of 9 nodes stayed headless for 1800 s because
+        // every member saw 5-7 "better" ghosts. It claims in its own, later slot, and only if fewer than k heads of the
+        // cell have been heard by then (OnHelloSlot). With consistent views nothing changes: ranks <= k claim first.
     }
     if (m_isHead && m_rank == rank)
     {
@@ -875,7 +919,11 @@ ErgrEmhcRouting::OnHelloSlot(uint8_t rank)
     {
         return;
     }
-    BecomeHead(rank);
+    if (rank > m_headsPerCell && CountHeadsInCell() >= m_headsPerCell)
+    {
+        return; // the better-ranked members did claim: no back-up needed
+    }
+    BecomeHead(rank > m_headsPerCell ? static_cast<uint8_t>(m_headsPerCell) : rank);
 }
 
 void
@@ -887,6 +935,10 @@ ErgrEmhcRouting::BecomeHead(uint8_t rank)
     if (!wasHead)
     {
         m_selector->OnRoleChange(true, Simulator::Now()); // adopt a handed-over or shared model
+        if (!m_waitingForHead.empty())
+        {
+            Simulator::ScheduleNow(&ErgrEmhcRouting::FlushWaitingForHead, this); // packets held while this node asked for a head
+        }
         m_metrics->OnHeadChange(m_id, true, m_cell);
         std::ostringstream details;
         details << "cell=" << m_cell << " rank=" << int(rank);
@@ -930,6 +982,24 @@ ErgrEmhcRouting::OnElectionFrame(const ErgrElectionHeader& hdr)
 {
     if (hdr.nodeId == m_id)
     {
+        return;
+    }
+    if (hdr.kind == ErgrElectionHeader::Solicit)
+    {
+        // A member of my cell has no head row: answer with a beacon (rate limited; one beacon serves every asker).
+        const Time now = Simulator::Now();
+        if (m_solicit && m_isHead && hdr.cellId == m_cell &&
+            (now - m_lastSolicitReply).GetSeconds() >= m_solicitReplyMinGapS)
+        {
+            m_lastSolicitReply = now;
+            Simulator::Schedule(Seconds(m_uniform->GetValue(0.0, m_solicitReplyJitterS)), [this]() {
+                if (IsAlive() && m_isHead)
+                {
+                    m_metrics->OnEvent(m_id, "SOLICIT_ANSWER", "beacon");
+                    SendBeacon();
+                }
+            });
+        }
         return;
     }
     if (hdr.kind == ErgrElectionHeader::DeadReport)
@@ -1140,6 +1210,12 @@ ErgrEmhcRouting::HandOffToHead(HeldPacket pkt)
               << " headRowsUnknownHmin=" << headRowsHereUnknownHmin << " headRowsElsewhere=" << headRowsElsewhere
               << " rows=" << m_table.Size();
             m_metrics->OnEvent(m_id, "NO_HEAD_FOR_HANDOFF", d.str());
+        }
+        if (m_solicit && !KnowsHeadOfMyCell())
+        {
+            // (If a head row exists but is excluded for this packet, e.g. the previous hop, it is a normal void.)
+            QueueForHead(pkt); // E34: hold the packet and ask the heads of my cell to beacon
+            return;
         }
         HandleVoid(pkt);
         return;
@@ -1367,6 +1443,112 @@ ErgrEmhcRouting::IsSuspect(uint16_t fwdId, Time now) const
 {
     auto it = m_suspectUntil.find(fwdId);
     return it != m_suspectUntil.end() && it->second > now;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Head solicitation (E34). With lean beacons a member can wait up to 100 s for the next head beacon, and a missed beacon
+// leaves it without a head row; its packets used to be dropped at once. Now it holds them (at most kMaxWaiting), broadcasts
+// a SOLICIT for its cell every SolicitWaitS, and gives up only after SolicitRetries asks. Any beacon from a head of the own
+// cell (the answer, or the head's normal beacon) releases the held packets.
+// ------------------------------------------------------------------------------------------------
+
+bool
+ErgrEmhcRouting::KnowsHeadOfMyCell() const
+{
+    for (const auto& entry : m_table.Rows())
+    {
+        const NeighbourEntry& row = entry.second;
+        if (row.isHead && row.cellId == m_cell && row.hmin != kUnknownHmin)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void
+ErgrEmhcRouting::QueueForHead(const HeldPacket& pkt)
+{
+    if (static_cast<int>(m_waitingForHead.size()) >= m_solicitMaxWaiting)
+    {
+        HeldPacket oldest = m_waitingForHead.front();
+        m_waitingForHead.pop_front();
+        m_metrics->OnNoHeadGiveUp(m_id, m_cell);
+        Drop(oldest, DropReason::NoEligibleForwarder);
+    }
+    m_waitingForHead.push_back(pkt);
+    if (!m_solicitTimer.IsRunning())
+    {
+        m_solicitAsks = 0;
+        SolicitTick();
+    }
+}
+
+void
+ErgrEmhcRouting::SendSolicit()
+{
+    ErgrElectionHeader hdr;
+    hdr.kind = ErgrElectionHeader::Solicit;
+    hdr.nodeId = m_id;
+    hdr.cellId = m_cell;
+    Ptr<Packet> packet = Create<Packet>(0);
+    packet->AddHeader(hdr);
+    m_metrics->OnSolicit(false);
+    m_metrics->OnEvent(m_id, "SOLICIT", "cell=" + std::to_string(m_cell) + " ask=" + std::to_string(m_solicitAsks));
+    TransmitFrame(packet, FrameType::Election, kNone, params::phy::kNumPowerLevels - 1);
+}
+
+void
+ErgrEmhcRouting::SolicitTick()
+{
+    if (m_waitingForHead.empty() || !IsAlive())
+    {
+        return;
+    }
+    if (KnowsHeadOfMyCell() || m_isHead)
+    {
+        FlushWaitingForHead(); // a head (possibly this node itself, just elected) is known: route the held packets
+        return;
+    }
+    if (m_solicitAsks >= m_solicitRetries)
+    {
+        // Give up: nobody answered. (Against ground truth this is only counted as an error if the cell does have a head.)
+        std::deque<HeldPacket> given;
+        given.swap(m_waitingForHead);
+        for (HeldPacket& pkt : given)
+        {
+            m_metrics->OnNoHeadGiveUp(m_id, m_cell);
+            Drop(pkt, DropReason::NoEligibleForwarder);
+        }
+        m_solicitAsks = 0;
+        StartElectionRound("nobody answered my solicit", false); // the cell may really have no head: elect one
+        return;
+    }
+    m_solicitAsks++;
+    SendSolicit();
+    m_solicitTimer = Simulator::Schedule(Seconds(m_solicitWaitS), &ErgrEmhcRouting::SolicitTick, this);
+}
+
+void
+ErgrEmhcRouting::FlushWaitingForHead()
+{
+    if (m_waitingForHead.empty() || !IsAlive() || !(KnowsHeadOfMyCell() || m_isHead))
+    {
+        return;
+    }
+    m_solicitTimer.Cancel();
+    if (m_solicitAsks > 0)
+    {
+        m_metrics->OnSolicit(true);
+        m_metrics->OnEvent(m_id, "HEAD_FOUND_AFTER_SOLICIT", "held=" + std::to_string(m_waitingForHead.size()));
+    }
+    m_solicitAsks = 0;
+    std::deque<HeldPacket> held;
+    held.swap(m_waitingForHead);
+    for (HeldPacket& pkt : held)
+    {
+        RoutePacket(pkt);
+    }
 }
 
 // ------------------------------------------------------------------------------------------------

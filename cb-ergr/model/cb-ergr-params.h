@@ -154,6 +154,19 @@ constexpr int kMaxAttempts = 16;          // [CONFIRM] busy-channel deferrals be
 constexpr int kQueueLimit = 64;           // [CONFIRM] frames waiting in the MAC
 } // namespace mac
 
+// ----------------------------------------------------- head solicitation ----
+// E34 (6 Nov 2026): a member must always know the heads of its own cell. A member with no usable head row HOLDS its packet,
+// broadcasts a short SOLICIT (an election-kind frame, 9 B) and the heads of its cell answer with a beacon.
+namespace solicit
+{
+constexpr bool kEnabled = true;           // [DECIDED 6 Nov 2026]
+constexpr double kWaitS = 4.0;            // [CONFIRM] time to wait for an answer before asking again (reply jitter 1 s + CSMA + 2 airtimes + propagation)
+constexpr int kRetries = 3;               // [CONFIRM] asks before the packets are given up (dropped as "no eligible forwarder")
+constexpr double kReplyJitterS = 1.0;     // [CONFIRM] a head waits U(0, this) before answering
+constexpr double kReplyMinGapS = 2.0;     // [CONFIRM] a head answers at most once in this time (one beacon serves every asker)
+constexpr int kMaxWaiting = 32;           // [CONFIRM] packets a member may hold while it asks
+} // namespace solicit
+
 // ------------------------------------------------------- dead-head quorum ----
 // D§3 P4: a head is declared dead when its beacon is overdue past its advertised next-beacon time + guard AND a quorum of
 // observers agree. Off by default: the old rule (neighbour-table expiry after 3 beacon periods) stays as the backstop.

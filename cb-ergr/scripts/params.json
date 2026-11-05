@@ -196,6 +196,14 @@
   "kTauSync": 0.7,
   "kThetaScale": 0.0009765625
  },
+ "solicit": {
+  "kEnabled": true,
+  "kMaxWaiting": 32,
+  "kReplyJitterS": 1.0,
+  "kReplyMinGapS": 2.0,
+  "kRetries": 3,
+  "kWaitS": 4.0
+ },
  "timers": {
   "kAckGuardS": 0.2,
   "kAckProcS": 0.05,

@@ -163,6 +163,14 @@ class MetricsCollector : public Object
     /// A node declared 'subject' dead (by quorum or by table expiry). Ground truth is read here, for reporting only:
     /// the subject is truly dead if its battery reached 0 earlier; latency = declaration time - death time.
     void OnDeadDeclared(uint32_t node, uint32_t subject, bool byQuorum);
+    /// GROUND TRUTH probe (reporting only): does this cell have a live head right now? Set by the scenario runner.
+    void SetCellHeadProbe(std::function<bool(uint16_t)> probe) { m_cellHasHead = probe; }
+    /// A member gave up on a packet because it knows no head of its own cell (after soliciting). Counted against ground truth.
+    void OnNoHeadGiveUp(uint32_t node, uint16_t cell);
+    /// GROUND TRUTH sample (reporting only): cells holding at least one live node, how many of them have a live head, and how
+    /// many ordinary nodes live in a cell without any head.
+    void OnCoverageSample(uint32_t occupiedCells, uint32_t headedCells, uint32_t nodes, uint32_t nodesInHeadlessCells);
+    void OnSolicit(bool answered) { (answered ? m_solicitAnswered : m_solicitsSent)++; }
     /// MAC counters at the end of the run (CsmaMac only): frames dropped (queue full or too many busy deferrals), deferrals.
     void SetMacStats(uint64_t drops, uint64_t deferrals)
     {
@@ -296,6 +304,9 @@ class MetricsCollector : public Object
     std::array<double, kNumFrameTypes> m_txEnergyByType{}, m_rxEnergyByType{};
     // Dead-head declarations (ground truth used for reporting only).
     uint64_t m_macDrops = 0, m_macDeferrals = 0;
+    std::function<bool(uint16_t)> m_cellHasHead;
+    double m_covOccupied = 0, m_covHeaded = 0, m_covNodes = 0, m_covNodesHeadless = 0;
+    uint64_t m_noHeadGiveUps = 0, m_noHeadGiveUpsWithHead = 0, m_solicitsSent = 0, m_solicitAnswered = 0;
     uint32_t m_deadDeclarations = 0, m_deadFalse = 0, m_deadByQuorum = 0, m_deadByExpiry = 0;
     std::map<uint32_t, double> m_deadFirstLatencyS;   ///< truly dead subject -> latency of the first declaration anywhere
     uint64_t m_electionsAfterWarmup = 0;

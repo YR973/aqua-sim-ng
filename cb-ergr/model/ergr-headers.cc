@@ -343,7 +343,7 @@ ErgrElectionHeader::Deserialize(Buffer::Iterator i)
 void
 ErgrElectionHeader::Print(std::ostream& os) const
 {
-    os << (kind == Hello ? "HELLO" : (kind == Retire ? "RETIRE" : (kind == Exit ? "EXIT" : "DEAD-REPORT"))) << " node=" << nodeId << " cell=" << cellId
+    os << (kind == Hello ? "HELLO" : (kind == Retire ? "RETIRE" : (kind == Exit ? "EXIT" : (kind == Solicit ? "SOLICIT" : "DEAD-REPORT")))) << " node=" << nodeId << " cell=" << cellId
        << " rank=" << int(rank) << " score=" << scoreQ;
 }
 

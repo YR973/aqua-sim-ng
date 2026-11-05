@@ -2860,6 +2860,45 @@ class CsmaAndAlohaMacsBothWork : public TestCase
 };
 
 
+// E34: a member must always know the head of its own cell. With lean beacons on, nobody may give up a packet for "no own head"
+// while the cell has a live head (ground truth), the cells keep their heads, and the solicit path is used.
+class MembersAlwaysFindTheirCellsHead : public TestCase
+{
+  public:
+    MembersAlwaysFindTheirCellsHead()
+        : TestCase("E34: no packet dies at the source for 'no own head' while the cell has a head; cells stay headed")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-e34";
+        ScenarioSettings settings;
+        settings.outDir = dir;
+        settings.seed = 5;
+        settings.numNodes = 120;
+        settings.cellSizeM = 750.0;
+        settings.simTimeS = 1300;
+        settings.warmupS = 300;
+        settings.pktRateHz = 0.01;
+        settings.currentSpeed = 1.0; // nodes cross cell borders, so heads leave and cells need new ones
+        settings.leanBeacons = true;
+        ScenarioConfig config;
+        RegisterSettings(config, settings);
+        ScenarioResult r = RunScenario(settings, config);
+        auto row = ReadCsv(dir + "/summary.csv")[0];
+        NS_TEST_ASSERT_MSG_EQ((r.packetsCreated > 100), true, "traffic");
+        NS_TEST_ASSERT_MSG_EQ(std::stod(row["nohead_giveups_cell_had_head"]), 0.0,
+                              "no give-up for 'no own head' while the cell had a head");
+        NS_TEST_ASSERT_MSG_EQ((std::stod(row["cells_with_head_share"]) > 0.9), true,
+                              "occupied cells have a head at least 90% of the time: " << row["cells_with_head_share"]);
+        NS_TEST_ASSERT_MSG_EQ((std::stod(row["nodes_in_headless_cells_share"]) < 0.1), true, "few nodes without a head");
+        std::filesystem::remove_all(dir);
+    }
+};
+
+
 class CbErgrTestSuite : public TestSuite
 {
   public:
@@ -2912,6 +2951,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new LeanBeaconsCutBeaconTrafficButKeepTheNetworkWorking, TestCase::QUICK);
         AddTestCase(new PowerLevelsChangeSuccessAndEnergy, TestCase::QUICK);
         AddTestCase(new CsmaAndAlohaMacsBothWork, TestCase::QUICK);
+        AddTestCase(new MembersAlwaysFindTheirCellsHead, TestCase::QUICK);
         AddTestCase(new NewHeadStartsFromTheNeighbourCellsModel, TestCase::QUICK);
         AddTestCase(new PublishedGeometryHas32NeighboursAndBfsHmin, TestCase::QUICK);
         AddTestCase(new PublishedProtocolRunsAndIsDeterministic, TestCase::QUICK);
