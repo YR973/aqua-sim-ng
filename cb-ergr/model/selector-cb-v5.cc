@@ -84,6 +84,11 @@ SelectorCbV5::GetTypeId()
             .AddAttribute("MarginFromRssi", "Use the measured SNR of the candidate's last beacon for the margin feature.",
                           BooleanValue(params::learner::kMarginFromRssi),
                           MakeBooleanAccessor(&SelectorCbV5::m_marginFromRssi), MakeBooleanChecker())
+            .AddAttribute("AckGate", "Uncertainty used by the gated mode: Logit (spec width > TauW) or ProbStd (p(1-p) width > ProbStdThreshold).",
+                          EnumValue(AckGate::Logit), MakeEnumAccessor<AckGate>(&SelectorCbV5::m_ackGate),
+                          MakeEnumChecker(AckGate::Logit, "Logit", AckGate::ProbStd, "ProbStd"))
+            .AddAttribute("ProbStdThreshold", "Threshold of the ProbStd ACK gate.", DoubleValue(params::learner::kAckProbStdThreshold),
+                          MakeDoubleAccessor(&SelectorCbV5::m_probStdThreshold), MakeDoubleChecker<double>(0.0))
             .AddAttribute("AckMode", "When to request hop ACKs.", EnumValue(AckMode::Gated),
                           MakeEnumAccessor<AckMode>(&SelectorCbV5::m_ackMode),
                           MakeEnumChecker(AckMode::Every, "Every", AckMode::Gated, "Gated", AckMode::BitmapOnly,
@@ -145,6 +150,8 @@ SelectorCbV5::SelectorCbV5()
       m_neighbourPrior(params::learner::kNeighbourPrior),
       m_marginFromRssi(params::learner::kMarginFromRssi),
       m_ackMode(AckMode::Gated),
+      m_ackGate(AckGate::Logit),
+      m_probStdThreshold(params::learner::kAckProbStdThreshold),
       m_lambdaInit(params::price::kLambdaInit),
       m_eta(params::price::kEta),
       m_targetLifetimeS(params::price::kTargetLifetimeS),
@@ -276,7 +283,7 @@ SelectorCbV5::Score(double pSuccess, const Features& x, double txEnergyJ, double
 }
 
 bool
-SelectorCbV5::NeedsAck(const PacketCtx& pkt, double width)
+SelectorCbV5::NeedsAck(const PacketCtx& pkt, double width, double pMean)
 {
     if (m_ackMode == AckMode::Every)
     {
@@ -291,7 +298,12 @@ SelectorCbV5::NeedsAck(const PacketCtx& pkt, double width)
         return false;
     }
     const bool priority = (pkt.hpkt > pkt.myHmin) || pkt.priority;   // spec §8.6
-    const bool unsure = width > m_tauW;
+    bool unsure = width > m_tauW;
+    if (m_ackGate == AckGate::ProbStd)
+    {
+        const double p = (pMean < 0.0) ? 0.5 : pMean;
+        unsure = p * (1.0 - p) * width > m_probStdThreshold; // delta-method std of the success probability
+    }
     const bool audit = m_uniform->GetValue() < m_qAudit;             // unbiased sample of labels
     return unsure || priority || audit;
 }
@@ -369,7 +381,7 @@ SelectorCbV5::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligibl
     best.width = m_model.Width(chosen->x);
     best.score = chosen->score;
     best.lambdaE = (m_enableLifetime && m_price) ? m_price->Lambda() : 0.0;
-    best.ackRequest = NeedsAck(pkt, best.width);
+    best.ackRequest = NeedsAck(pkt, best.width, chosen->pMean);
     best.valid = true;
     // Rank of the chosen option by its mean success among the options at the chosen level (1 = best mean).
     int rank = 1;

@@ -34,6 +34,13 @@ namespace ns3
 namespace cbergr
 {
 
+/// Which uncertainty the gated mode compares with its threshold (E21, 5 Nov 2026).
+enum class AckGate
+{
+    Logit,   ///< spec §8.6: width(x) = sqrt(x^T A^-1 x) > TauW (TauW = 0.3 is the spec value)
+    ProbStd  ///< ablation: std of the success probability, p (1 - p) width(x), > ProbStdThreshold
+};
+
 /// When to ask for a hop ACK (spec §10, R11).
 enum class AckMode
 {
@@ -68,7 +75,7 @@ class SelectorCbV5 : public ForwarderSelector
     double Score(double pSuccess, const Features& x, double txEnergyJ, double batteryFraction) const;
 
     /// Spec §8.6: should this attempt ask for an ACK? 'width' is the model's uncertainty at x.
-    bool NeedsAck(const PacketCtx& pkt, double width);
+    bool NeedsAck(const PacketCtx& pkt, double width, double pMean = -1.0);
 
     // --- Learning ---
     void OnSent(const Decision& d, Time now) override;
@@ -115,6 +122,8 @@ class SelectorCbV5 : public ForwarderSelector
     double m_tauW, m_qAudit;
     bool m_enablePower, m_enableLifetime, m_enableSharing, m_marginFromRssi;
     AckMode m_ackMode;
+    AckGate m_ackGate;
+    double m_probStdThreshold;
     double m_lambdaInit, m_eta, m_targetLifetimeS, m_priceTickS;
     double m_tauSync, m_cosGate, m_matureTrace, m_betaInflate;
     double m_handoverKeepS;

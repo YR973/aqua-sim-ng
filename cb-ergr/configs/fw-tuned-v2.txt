@@ -1,0 +1,2 @@
+# FW tuned by scripts/tune.py on training seeds 101,102,103,104,105, budget 40 evaluations, N=100, 2500 s, rate 0.004, E0 10000, speed 1.0; config configs/g-base.txt extra ' --N=100'; do not edit by hand.
+SelectorAttributes = Weights=0.19516,-0.730613,2.63287,0.0397269,1.89681,0.211857,-1.49864,30,2.33923

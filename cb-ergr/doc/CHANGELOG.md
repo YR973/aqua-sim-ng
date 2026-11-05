@@ -2,6 +2,55 @@
 
 One entry per change. Format fixed by the kickoff (rule 8).
 
+## 2026-11-05 18:00 — Step C: warm start check, ExplorationScale tuning, ProbStd ACK gate, heterogeneous scenario, density transfer
+- What:
+  * **C9 warm start:** checked, no code change needed. `PriorWeights` already sets BOTH `thetaHat` and the cell prior `thetaCell` (`selector-cb-v5.cc` SetServices: `SetCellPrior(w); SetTheta(w)`), and `BeginDecision` decays theta toward `thetaCell`. The only later writer of the cell prior is `RefreshCellPrior`, which replaces it by the mean of accepted same-cell peers' models (themselves warm). So the explanation "forgetting decays toward zero" does not hold; a different reason is likely (see result 1).
+  * **C10:** `scripts/tune.py` CB range `ExplorationScale` 0.2-1.0 (was 0.05-4); `--config/--extra` so tuning runs on a scenario config.
+  * **C11:** `AckGate=Logit|ProbStd` (CB attribute, default Logit = the spec gate, TauW = 0.3 unchanged) and `ProbStdThreshold` (`params::learner::kAckProbStdThreshold`, 0.05 default; 0.2 tuned, see below). ProbStd asks for an ACK when p (1 - p) width(x) > threshold, p = the chosen option's mean success.
+  * **C12:** heterogeneous scenario `--NoiseBandOffsetDb=10`: receivers with x in [750, 1500) m (the second cell column) hear 10 dB more noise (`model/noise-band.h`, applied in `CbErgrPropagation` and `OracleEvaluator`; CONFIRM E33). The beacon SNR a forwarder measures is the reverse link at ITS position, so the band is invisible to FW's and CB's features; only the channel and the oracle know it.
+  * `scripts/compare.py` (variants on a config, paired differences), `configs/{fw,cb}-tuned-v2{,-n300}.txt`; tests for the ProbStd gate and the noise band (48 + 1 cases pass).
+- Why: user items C9-C12 and R8 (train on one density, test on another).
+- Effect on results: defaults unchanged (`AckGate=Logit`, `NoiseBandOffsetDb=0`).
+- Spec/design deviation: the ProbStd gate is an ablation beside the spec gate, not a replacement. The tuned FW/CB settings below are for the new benchmark (N = 100, 10 sources, Csma, 2000 s, lean beacons, 5 seeds 101-105, 40 evaluations each, same optimiser); FW had to be retuned because the old tuning belonged to the old benchmark.
+- Setup of all runs below: `configs/g-base.txt` with `--N=100` (N = 300 where stated), 10 sources, Csma, validation seeds 106-110, PDR mean +- 95% CI of 5 seeds; paired differences are per seed.
+- Result 1, CB-warm vs FW (homogeneous, N = 100):
+  | method | PDR | hop success | regret | AR rate | ACK frames / delivered |
+  |---|---|---|---|---|---|
+  | RR | 0.303 +- 0.023 | 0.686 | 0.184 | 0 | 0 |
+  | RR + feedback | 0.436 +- 0.018 | 0.296 | 0.128 | 1.00 | 7.22 |
+  | FW physics | 0.497 +- 0.042 | 0.316 | 0.038 | 1.00 | 6.64 |
+  | FW old tuning (before the benchmark change) | 0.482 +- 0.048 | 0.315 | 0.041 | 1.00 | 6.71 |
+  | FW tuned now (v2) | 0.460 +- 0.031 | 0.310 | 0.040 | 1.00 | 6.98 |
+  | CB defaults | 0.449 +- 0.042 | 0.304 | 0.094 | 1.00 | 6.88 |
+  | CB tuned (v2) | 0.457 +- 0.058 | 0.300 | 0.101 | 1.00 | 7.00 |
+  | CB-warm (tuned CB + FW-v2 weights) | 0.465 +- 0.051 | 0.302 | 0.083 | 1.00 | 6.85 |
+  | CB-warm, Lambda0 = 10 (diagnostic) | 0.459 +- 0.083 | 0.307 | 0.072 | 1.00 | 6.92 |
+  | Oracle | 0.466 +- 0.053 | 0.320 | 0 | 1.00 | 7.04 |
+  Paired against FW-v2: CB-warm +0.006 +- 0.066, CB tuned -0.003 +- 0.057, FW physics +0.038 +- 0.031, Oracle +0.007 +- 0.060. **CB-warm equals FW (difference +0.006, CI +-0.066); everything from FW to the oracle is inside the noise; retuning FW made it worse out of sample (0.497 -> 0.460, overfitting 5 seeds).** The oracle is no better than FW, so there is nothing to learn here (headroom table). A likely reason the warm start fades is the prior precision: Lambda0 = 1 (tuned 2.3) against FW weights up to 30 means the first label steps and the exploration noise (std ~ V / sqrt(Lambda0) per weight) are as large as the weights themselves; the design's P7 prior precision (0.1 x Laplace Hessian) is not built, and the Lambda0 = 10 row shows no gain either.
+- Result 2, tuned ExplorationScale: the (1+1)-ES explored V in [0.43, 1.0] and kept **V = 1.0** (tuned CB: V = 1, Gamma = 0.948, Lambda0 = 2.34, KappaP = 0.328; in-sample PDR 0.482 -> 0.521). The top five evaluations used V between 0.43 and 1.0, i.e. no preference. Validation with the other settings fixed: V = 1.0 0.457 +- 0.058, V = 0.5 0.445 +- 0.066, V = 0.2 0.460 +- 0.059: **no measurable effect of V in 0.2-1.0**. What the tuning did move is Lambda0 (1 -> 2.3-3.9 in all top candidates).
+- Result 3, ACK gates (CB tuned; tuning seeds 101-105 for the threshold, validation seeds 106-110):
+  | gate | PDR (val) | AR rate | ACK frames / delivered | ACK energy J / delivered | hop success |
+  |---|---|---|---|---|---|
+  | always ACK (AckMode=Every) | 0.457 +- 0.058 | 1.000 | 7.00 | 10.81 | 0.300 |
+  | spec logit-width gate, TauW = 0.3 | 0.457 +- 0.058 | **1.000** | 7.00 | 10.81 | 0.300 |
+  | ProbStd, threshold 0.2 | **0.502 +- 0.053** | 0.728 | **4.70** | **7.63** | 0.404 |
+  | BitmapOnly (retries still ask) | 0.501 +- 0.085 | 0.638 | 4.23 | 6.89 | 0.428 |
+  The threshold was chosen on seeds 101-105 as the largest of {0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3} whose PDR stays within 0.01 of always-ACK (0.2: 0.526 against 0.520, AR 0.750); 0.3 lost 0.014. **The spec gate never relaxes (AR 1.000, identical to Every); ProbStd at 0.2 saves 33% of the ACK frames and 29% of the ACK energy and RAISES PDR by +0.046 +- 0.029 (paired) because fewer ACKs mean less contention.** The PDR gain is a channel-load effect, not a learning effect (BitmapOnly gets the same).
+- Result 4, heterogeneous scenario (N = 100, +10 dB in the band; invisible to the features):
+  | method | PDR | hop success | AR rate | ACK frames / delivered |
+  |---|---|---|---|---|
+  | RR | 0.144 +- 0.042 | 0.574 | 0 | 0 |
+  | RR + feedback | 0.261 +- 0.047 | 0.248 | 1.00 | 9.87 |
+  | FW physics | 0.263 +- 0.054 | 0.269 | 1.00 | 9.91 |
+  | FW tuned on the homogeneous scenario (v2) | 0.269 +- 0.039 | 0.270 | 1.00 | 9.82 |
+  | CB tuned | 0.267 +- 0.046 | 0.259 | 1.00 | 9.69 |
+  | CB-warm | 0.276 +- 0.046 | 0.280 | 1.00 | 9.58 |
+  | CB tuned + ProbStd | 0.286 +- 0.038 | 0.338 | 0.73 | 6.91 |
+  | CB-warm + ProbStd | 0.301 +- 0.054 | 0.353 | 0.69 | 6.26 |
+  | Oracle | 0.306 +- 0.035 | 0.277 | 1.00 | 9.86 |
+  Oracle - FW(v2) = +0.038 +- 0.020 (it was +0.007 without the band), so the band creates a little headroom but far less than 0.1. Paired against FW(v2): CB tuned -0.002 +- 0.073, CB-warm +0.007 +- 0.067, CB-warm + ProbStd +0.033 +- 0.073. **CB (cold or warm) does not beat FW in the heterogeneous scenario either.** Reason: the band changes which CANDIDATE is bad, and no feature identifies the candidate's cell; CB's model is per head, so it can only shift its intercept.
+- Result 5, density transfer (R8; N = 100 versus N = 300, validation seeds): FW weights tuned at N = 100 give PDR 0.219 +- 0.050 at N = 300, against 0.276 +- 0.045 for weights tuned at N = 300 and 0.262 +- 0.062 for the physics weights (oracle 0.258 +- 0.026): **a transfer loss of 0.057 for FW**. The other way, N = 300-tuned FW at N = 100: 0.477 +- 0.039 against 0.460 +- 0.031 (tuned at N = 100) and 0.497 +- 0.042 (physics). CB at N = 300: hyperparameters tuned at N = 100 0.250 +- 0.053, tuned at N = 300 (V = 0.92, Gamma = 0.959, Lambda0 = 0.60, KappaP = 0.48) 0.245 +- 0.059, CB-warm with FW(N=100) 0.278 +- 0.053, CB-warm with FW(N=300) 0.245 +- 0.036, FW(N=300) 0.276 +- 0.045. At N = 100, CB with N = 300 hyperparameters 0.488 +- 0.098 against 0.457 +- 0.058. So the weights do not transfer between densities for FW (-0.057), while CB's online learning is not visibly better or worse after transfer (all CB differences inside the noise); this is the only place where a difference between FW and CB shows, and it is a statement about the FW tuning, not a win for CB (the physics weights transfer best).
+
 ## 2026-11-05 14:00 — Step B: headroom table
 - What: `scripts/headroom.py` (runs RR, RR+FB, FW-phys, FW-tuned and the Oracle for N in {100, 300} x Mac in {Csma, Aloha} x NumSources in {10, 30}, 5 seeds 106-110, `configs/g-base.txt` otherwise, lean beacons on); results in `results/reference/headroom/`.
 - Why: user item B8: measure how much room there is above the static rule before comparing methods again; only scenarios with an oracle - FW gap of roughly >= 0.1 are meaningful for "does learning help".

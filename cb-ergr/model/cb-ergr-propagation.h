@@ -18,6 +18,7 @@
 
 #include "acoustic-link-model.h"
 #include "gm-shadowing.h"
+#include "noise-band.h"
 
 #include "ns3/aqua-sim-propagation.h"
 #include "ns3/random-variable-stream.h"
@@ -35,6 +36,13 @@ namespace cbergr
 class CbErgrPropagation : public AquaSimPropagation
 {
   public:
+    void SetNoiseBandXMin(double v) { m_noiseBand.xMinM = v; }
+    double GetNoiseBandXMin() const { return m_noiseBand.xMinM; }
+    void SetNoiseBandXMax(double v) { m_noiseBand.xMaxM = v; }
+    double GetNoiseBandXMax() const { return m_noiseBand.xMaxM; }
+    void SetNoiseBandOffset(double v) { m_noiseBand.offsetDb = v; }
+    double GetNoiseBandOffset() const { return m_noiseBand.offsetDb; }
+    const NoiseBand& GetNoiseBand() const { return m_noiseBand; }
     static TypeId GetTypeId();
     CbErgrPropagation();
 
@@ -76,6 +84,7 @@ class CbErgrPropagation : public AquaSimPropagation
     double m_calibFrameBytes;
     double m_extraLossProbability;
     bool m_idealLinks;
+    NoiseBand m_noiseBand;
     std::function<bool(uint32_t, uint32_t, uint8_t)> m_filter;
     Ptr<UniformRandomVariable> m_extraLossDraw;
 

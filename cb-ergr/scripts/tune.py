@@ -52,7 +52,7 @@ class Space:
             self.selector = "CbV5"
             # (attribute, transform, lo, hi, start). 'log': optimise log(value); 'log1m': optimise log(1 - value).
             self.spec = [
-                ("ExplorationScale", "log", 0.05, 4.0, param("learner", "kExplorationScale")),
+                ("ExplorationScale", "log", 0.2, 1.0, param("learner", "kExplorationScale")),   # range 0.2-1.0 since 5 Nov 2026 (was 0.05-4)
                 ("Gamma", "log1m", 0.80, 0.999, param("learner", "kForgetGamma")),
                 ("Lambda0", "log", 0.05, 20.0, param("learner", "kLambda0")),
                 ("KappaP", "lin", 0.0, 1.0, param("learner", "kKappaP")),
@@ -89,11 +89,13 @@ def evaluate(space, x, args, tag):
 
     def one(seed):
         out = os.path.join(args.out, "runs", f"{tag}_s{seed}")
-        cmd = [args.binary, f"--Selector={space.selector}", f"--SelectorAttributes={attrs}", f"--Seed={seed}",
-               f"--N={args.n}", f"--SimTimeS={args.sim}", f"--WarmupS={args.warmup}",
-               f"--PktRatePerNodeHz={args.rate}", f"--InitialEnergyJ={args.e0}", f"--CurrentSpeed={args.speed}",
+        cmd = [args.binary] + (([f"--ConfigFile={args.config}"]) if args.config else []) + \
+              [f"--Selector={space.selector}", f"--SelectorAttributes={attrs}", f"--Seed={seed}",
                f"--OutDir={out}", "--LogLinks=false", "--LogNodes=false", "--LogPackets=false", "--LogEvents=false",
-               "--ComputeRegret=false"]
+               "--ComputeRegret=false"] + args.extra.split()
+        if not args.config:   # old-style invocation: explicit scenario numbers
+            cmd += [f"--N={args.n}", f"--SimTimeS={args.sim}", f"--WarmupS={args.warmup}", f"--PktRatePerNodeHz={args.rate}",
+                    f"--InitialEnergyJ={args.e0}", f"--CurrentSpeed={args.speed}"]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError(f"run failed ({tag}, seed {seed}): {r.stderr[-300:]}")
@@ -122,6 +124,8 @@ def main():
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--write-config", default="")
+    ap.add_argument("--config", default="", help="scenario config file (e.g. configs/g-base.txt); then --n/--sim/... are not passed")
+    ap.add_argument("--extra", default="", help="extra scenario arguments, e.g. '--N=100 --NumSources=10'")
     args = ap.parse_args()
     args.seed_list = [int(s) for s in args.seeds.split(",")]
     if any(not (101 <= s <= 110) for s in args.seed_list):
@@ -161,7 +165,7 @@ def main():
         with open(args.write_config, "w") as f:
             f.write(f"# {args.target.upper()} tuned by scripts/tune.py on training seeds {args.seeds}, budget {args.budget} "
                     f"evaluations, N={args.n}, {args.sim:g} s, rate {args.rate}, E0 {args.e0:g}, speed {args.speed}; "
-                    f"do not edit by hand.\nSelectorAttributes = {final}\n")
+                    f"config {args.config or '-'} extra '{args.extra}'; do not edit by hand.\nSelectorAttributes = {final}\n")
 
 
 if __name__ == "__main__":

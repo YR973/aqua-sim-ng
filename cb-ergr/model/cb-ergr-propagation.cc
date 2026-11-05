@@ -87,6 +87,17 @@ CbErgrPropagation::GetTypeId()
                           DoubleValue(0.0),
                           MakeDoubleAccessor(&CbErgrPropagation::m_extraLossProbability),
                           MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("NoiseBandXMinM", "Heterogeneous scenario: noise band starts at this x (m).",
+                          DoubleValue(params::channel::kNoiseBandXMinM),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandXMin, &CbErgrPropagation::GetNoiseBandXMin),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("NoiseBandXMaxM", "Noise band ends at this x (m).", DoubleValue(params::channel::kNoiseBandXMaxM),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandXMax, &CbErgrPropagation::GetNoiseBandXMax),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("NoiseBandOffsetDb", "Extra noise heard by receivers inside the band (dB); 0 = off.",
+                          DoubleValue(params::channel::kNoiseBandOffsetDb),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandOffset, &CbErgrPropagation::GetNoiseBandOffset),
+                          MakeDoubleChecker<double>(0.0))
             .AddAttribute("IdealLinks",
                           "Every frame inside the range is decodable (like the paper's BER 1e-9 channel); collisions remain.",
                           BooleanValue(params::channel::kIdealLinks),
@@ -115,7 +126,8 @@ CbErgrPropagation::CbErgrPropagation()
       m_referencePtW(params::phy::kReferenceAcousticPtW),
       m_calibFrameBytes(params::phy::kCalibFrameBytes),
       m_extraLossProbability(0.0),
-      m_idealLinks(params::channel::kIdealLinks)
+      m_idealLinks(params::channel::kIdealLinks),
+      m_noiseBand{params::channel::kNoiseBandXMinM, params::channel::kNoiseBandXMaxM, params::channel::kNoiseBandOffsetDb}
 {
     m_extraLossDraw = CreateObject<UniformRandomVariable>();
     m_shadowing = CreateObject<GmShadowing>();
@@ -217,7 +229,8 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
         }
         const uint32_t receiverId = receiver->GetNode()->GetId();
 
-        const double shadowDb = m_shadowing->GetShadowDb(senderId, receiverId, now);
+        const double shadowDb = m_shadowing->GetShadowDb(senderId, receiverId, now) +
+                                m_noiseBand.SnrChangeDb(receiverMobility->GetPosition());
         const double snrDb = m_link->SnrDb(sourceLevelDb, distanceM, shadowDb);
         const double per = m_link->PerFromSnr(snrDb, frameBytes);
         bool decodable = (m_lossDraw->GetValue() >= per) || m_idealLinks; // the draw is always consumed

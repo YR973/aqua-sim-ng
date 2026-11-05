@@ -1,6 +1,9 @@
 {
  "channel": {
   "kIdealLinks": false,
+  "kNoiseBandOffsetDb": 0.0,
+  "kNoiseBandXMaxM": 1500.0,
+  "kNoiseBandXMinM": 750.0,
   "kShadowSigmaDb": 5.0,
   "kShadowTauS": 120.0,
   "kShadowTickS": 5.0
@@ -48,6 +51,7 @@
   "kStrictProgress": true
  },
  "learner": {
+  "kAckProbStdThreshold": 0.05,
   "kAckWidthThreshold": 0.3,
   "kAuditRate": 0.1,
   "kBatteryFloor": 0.01,

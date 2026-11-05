@@ -35,6 +35,9 @@ namespace cbergr
 void
 RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
 {
+    c.Add("NoiseBandXMinM", &s.noiseBandXMinM, "Heterogeneous scenario: noise band start x (m)");
+    c.Add("NoiseBandXMaxM", &s.noiseBandXMaxM, "Noise band end x (m)");
+    c.Add("NoiseBandOffsetDb", &s.noiseBandOffsetDb, "Extra noise heard by receivers in the band (dB), 0 = off");
     c.Add("TargetLifetimeFactor", &s.targetLifetimeFactor, "CB energy price: target lifetime = factor x SimTimeS");
     c.Add("Mac", &s.mac, "Csma (listen-before-talk with backoff, as in the paper) or Aloha (Aqua-Sim broadcast MAC)");
     c.Add("Protocol", &s.protocol, "G = improved ERGR-EMHC-g (default), P0 = ERGR-EMHC as published (round robin only)");
@@ -195,6 +198,9 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     propagation->SetAttribute("RangeM", DoubleValue(s.rangeM));
     propagation->SetAttribute("BitRateBps", DoubleValue(s.bitRateBps));
     propagation->SetAttribute("IdealLinks", BooleanValue(s.idealLinks));
+    propagation->SetAttribute("NoiseBandXMinM", DoubleValue(s.noiseBandXMinM));
+    propagation->SetAttribute("NoiseBandXMaxM", DoubleValue(s.noiseBandXMaxM));
+    propagation->SetAttribute("NoiseBandOffsetDb", DoubleValue(s.noiseBandOffsetDb));
     CbErgrHelper::ConnectLinkTrace(propagation, metrics);
 
     AquaSimHelper asHelper = AquaSimHelper::Default();
@@ -220,6 +226,7 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     Ptr<OracleEvaluator> oracle = CreateObject<OracleEvaluator>();
     oracle->Configure([nodes](uint32_t id) { return nodes.Get(id)->GetObject<MobilityModel>()->GetPosition(); },
                       propagation->GetShadowing(), linkModel, s.rangeM);
+    oracle->SetNoiseBand(propagation->GetNoiseBand());
 
     std::vector<Ptr<ErgrEmhcRouting>> routings;
     std::vector<Ptr<ErgrEmhcPublishedRouting>> publishedRoutings;

@@ -12,6 +12,7 @@
 #define CB_ERGR_ORACLE_EVALUATOR_H
 
 #include "acoustic-link-model.h"
+#include "noise-band.h"
 #include "gm-shadowing.h"
 
 #include "ns3/nstime.h"
@@ -45,12 +46,15 @@ class OracleEvaluator : public Object
 
     /// True distance between two nodes (m).
     double Distance(uint32_t a, uint32_t b);
+    /// Ground truth: the channel's noise band (heterogeneous scenario), so the oracle sees what the learners cannot.
+    void SetNoiseBand(const NoiseBand& band) { m_noiseBand = band; }
 
   private:
     std::function<Vector(uint32_t)> m_position;
     Ptr<GmShadowing> m_shadowing;
     std::shared_ptr<const AcousticLinkModel> m_link;
     double m_rangeM = 0.0;
+    NoiseBand m_noiseBand;
 };
 
 } // namespace cbergr

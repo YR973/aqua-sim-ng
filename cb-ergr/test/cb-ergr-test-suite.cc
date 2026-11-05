@@ -1603,6 +1603,14 @@ class AckGateFollowsTheModeAndUncertainty : public TestCase
 
         Ptr<SelectorCbV5> audit = MakeCbSelector("AckMode=Gated;QAudit=1");
         NS_TEST_ASSERT_MSG_EQ(audit->NeedsAck(first, 0.0), true, "QAudit = 1 audits every attempt");
+
+        // AckGate=ProbStd: std of p ~ p (1 - p) width against ProbStdThreshold; the width threshold TauW is then ignored.
+        Ptr<SelectorCbV5> probStd = MakeCbSelector("AckMode=Gated;QAudit=0;AckGate=ProbStd;ProbStdThreshold=0.05");
+        NS_TEST_ASSERT_MSG_EQ(probStd->NeedsAck(first, 1.0, 0.99), false, "p near 1: tiny std, no ACK even with a wide model");
+        NS_TEST_ASSERT_MSG_EQ(probStd->NeedsAck(first, 1.0, 0.5), true, "p = 0.5, width 1: std 0.25 > 0.05");
+        NS_TEST_ASSERT_MSG_EQ(probStd->NeedsAck(first, 0.1, 0.5), false, "p = 0.5, width 0.1: std 0.025 <= 0.05");
+        NS_TEST_ASSERT_MSG_EQ(probStd->NeedsAck(retry, 0.0, 0.99), true, "retries always ask");
+        NS_TEST_ASSERT_MSG_EQ(gated->NeedsAck(first, 1.0, 0.99), true, "the spec (Logit) gate ignores p");
     }
 };
 
@@ -1977,6 +1985,20 @@ class OracleSuccessMatchesTheLinkModel : public TestCase
         NS_TEST_ASSERT_MSG_EQ_TOL(oracle->HopSuccess(0, 2, 2, 167, t, true), 0.0, 0.0, "beyond the range: zero");
         NS_TEST_ASSERT_MSG_EQ((oracle->HopSuccess(0, 1, 0, 167, t, false) < geo), true, "lower power, lower success");
         NS_TEST_ASSERT_MSG_EQ_TOL(oracle->Distance(0, 1), 750.0, 1e-12, "distance");
+
+        // Noise band (heterogeneous scenario): +10 dB noise at receivers with x in [500, 1000) lowers the SNR by 10 dB.
+        NoiseBand band;
+        band.xMinM = 500.0;
+        band.xMaxM = 1000.0;
+        band.offsetDb = 10.0;
+        oracle->SetNoiseBand(band);
+        double inBand = oracle->HopSuccess(0, 1, 2, 167, t, true);
+        double expectedBand =
+            1.0 - link->PerFromSnr(link->SnrDb(link->FullSourceLevelDb(), 750.0, shadowDb - 10.0), 167);
+        NS_TEST_ASSERT_MSG_EQ_TOL(inBand, expectedBand, 1e-12, "receiver inside the band: 10 dB less SNR");
+        NS_TEST_ASSERT_MSG_EQ_TOL(oracle->HopSuccess(1, 0, 2, 167, t, true),
+                                  1.0 - link->PerFromSnr(link->SnrDb(link->FullSourceLevelDb(), 750.0, shadowing->GetShadowDb(1, 0, t)), 167),
+                                  1e-12, "transmitter inside the band (receiver outside): unchanged");
     }
 };
 

@@ -74,6 +74,9 @@ namespace channel
 {
 constexpr double kShadowSigmaDb = 5.0;   // [SPEC] S§4.5
 constexpr double kShadowTauS = 120.0;    // [SPEC] S§4.5
+constexpr double kNoiseBandXMinM = 750.0;   // [DESIGN] heterogeneous scenario: the band is the second cell column (x in [750, 1500))
+constexpr double kNoiseBandXMaxM = 1500.0;
+constexpr double kNoiseBandOffsetDb = 0.0;  // 0 = off; the heterogeneous scenario uses 10 dB
 constexpr bool kIdealLinks = false;      // [DESIGN] test 16 only: frames inside R always decode (the paper's near-error-free channel)
 constexpr double kShadowTickS = 5.0;     // [DESIGN] time grid of the process; see gm-shadowing.h
 } // namespace channel
@@ -186,6 +189,7 @@ constexpr double kMu = 0.1;              // [SPEC] S§8.5
 constexpr double kKappa = 1.0;           // [SPEC] S§8.5 exponent of phi(e)
 constexpr double kBatteryFloor = 0.01;   // [SPEC] S§8.5 max(e, 0.01)
 constexpr double kAckWidthThreshold = 0.30; // [SPEC] S§8.6 TauW
+constexpr double kAckProbStdThreshold = 0.05; // [CONFIRM] ablation AckGate=ProbStd: ACK when p(1-p) width(x) exceeds this; tuned on training seeds
 constexpr double kAuditRate = 0.10;      // [SPEC] S§8.6 QAudit
 constexpr double kEntryAgeScaleS = 1000.0; // [SPEC] S§8.1
 constexpr double kQueueMax = 10.0;       // [SPEC] S§8.1

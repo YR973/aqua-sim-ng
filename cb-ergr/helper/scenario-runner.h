@@ -20,6 +20,9 @@ namespace cbergr
 struct ScenarioSettings
 {
     // run
+    double noiseBandXMinM = params::channel::kNoiseBandXMinM;
+    double noiseBandXMaxM = params::channel::kNoiseBandXMaxM;
+    double noiseBandOffsetDb = params::channel::kNoiseBandOffsetDb;
     double targetLifetimeFactor = params::price::kTargetLifetimeRunFactor;
     std::string mac = params::mac::kMac;   // "Csma" or "Aloha"
     std::string protocol = "G";            // "G" = ERGR-EMHC-g, "P0" = ERGR-EMHC as published

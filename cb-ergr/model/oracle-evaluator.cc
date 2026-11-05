@@ -52,7 +52,7 @@ OracleEvaluator::HopSuccess(uint32_t tx, uint32_t rx, int level, uint32_t bytes,
     {
         return 0.0;
     }
-    const double shadowDb = withShadowing ? m_shadowing->GetShadowDb(tx, rx, now) : 0.0;
+    const double shadowDb = (withShadowing ? m_shadowing->GetShadowDb(tx, rx, now) : 0.0) + m_noiseBand.SnrChangeDb(m_position(rx));
     const double sourceLevelDb = m_link->FullSourceLevelDb() + params::phy::kSourceLevelOffsetDb[level];
     const double snrDb = m_link->SnrDb(sourceLevelDb, distanceM, shadowDb);
     return 1.0 - m_link->PerFromSnr(snrDb, bytes);
