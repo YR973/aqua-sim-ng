@@ -13,6 +13,7 @@
 
 #include "ergr-headers.h"
 #include "forwarder-selector.h"
+#include "loss-budget.h"
 
 #include "ns3/aqua-sim-energy-model.h"
 #include "ns3/nstime.h"
@@ -172,6 +173,8 @@ class MetricsCollector : public Object
     void OnCoverageSample(uint32_t occupiedCells, uint32_t headedCells, uint32_t nodes, uint32_t nodesInHeadlessCells);
     void OnSolicit(bool answered) { (answered ? m_solicitAnswered : m_solicitsSent)++; }
     /// MAC counters at the end of the run (CsmaMac only): frames dropped (queue full or too many busy deferrals), deferrals.
+    /// A forwarder accepted a DATA frame addressed to it (ground truth for the loss budget).
+    void OnDataDelivered(E2EKey key, uint32_t sender, uint32_t fwd);
     void SetMacStats(uint64_t drops, uint64_t deferrals)
     {
         m_macDrops = drops;
@@ -272,6 +275,8 @@ class MetricsCollector : public Object
     void WriteSummary();
     void WriteNodes();
     void WritePackets();
+    void WriteLossBudget();
+    std::string LossCauseOf(const PacketRecord& r) const;
     void WriteEvents();
     void WriteFramesLine(const std::string& line);
 
@@ -303,6 +308,8 @@ class MetricsCollector : public Object
     /// counted here, and header-first receive (N-A) is not subtracted for overheard data.
     std::array<double, kNumFrameTypes> m_txEnergyByType{}, m_rxEnergyByType{};
     // Dead-head declarations (ground truth used for reporting only).
+    LossBudget m_loss;
+    uint64_t m_voidNacks = 0;
     uint64_t m_macDrops = 0, m_macDeferrals = 0;
     std::function<bool(uint16_t)> m_cellHasHead;
     double m_covOccupied = 0, m_covHeaded = 0, m_covNodes = 0, m_covNodesHeadless = 0;

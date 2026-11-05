@@ -1,0 +1,12 @@
+# Fix candidate for the gap to the paper (6 Nov 2026): the preamble. Every frame carries TPre = 0.1 s before its payload bits, so a
+# 25 B beacon costs 0.111 s and a 150 B data frame 0.175 s at 17.8 kbit/s. The paper does not give a preamble (Aqua-Sim's own
+# default is 0). P0 at 0 m/s, 20 training seeds.
+binary: /home/user/ws/ns-3-dev/build/contrib/cb-ergr/ns3.41-cb-ergr-scenario
+out_root: results/p0-tpre
+seeds: [101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120]
+common: {ConfigFile: /home/user/aqua-sim-ng/cb-ergr/configs/p0-published.txt, CurrentSpeed: 0, LogLinks: false, LogPackets: false, LogNodes: false, LogEvents: false}
+runs:
+  - {name: P0-csma-ideal, selector: RoundRobin, settings: {IdealLinks: true, ShadowSigmaDb: 0}}
+  - {name: P0-csma,       selector: RoundRobin}
+sweeps:
+  - {factor: TPre, values: [0.1, 0.05, 0.0]}

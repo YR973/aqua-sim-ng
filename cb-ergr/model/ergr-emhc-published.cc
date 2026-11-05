@@ -644,6 +644,7 @@ ErgrEmhcPublishedRouting::OnData(const ErgrDataHeader& hdr)
 {
     E2EKey key{hdr.sourceId, hdr.sourceSeq};
     m_metrics->OnHopReceived(hdr.senderId, m_id, hdr.hopSeq);
+    m_metrics->OnDataDelivered(key, hdr.senderId, m_id);
     if (!m_seen->Insert(key, Simulator::Now()))
     {
         m_metrics->OnDuplicate(m_id);

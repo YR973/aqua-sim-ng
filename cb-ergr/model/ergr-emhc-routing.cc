@@ -1388,7 +1388,8 @@ void
 ErgrEmhcRouting::OnData(const ErgrDataHeader& hdr)
 {
     E2EKey key{hdr.sourceId, hdr.sourceSeq};
-    m_metrics->OnHopReceived(hdr.senderId, m_id, hdr.hopSeq); // ground truth, logging only
+    m_metrics->OnHopReceived(hdr.senderId, m_id, hdr.hopSeq);
+    m_metrics->OnDataDelivered(E2EKey{hdr.sourceId, hdr.sourceSeq}, hdr.senderId, m_id); // ground truth, logging only
     if (m_feedback)
     {
         m_feedback->MarkReceived(hdr.senderId, hdr.hopSeq, Simulator::Now()); // spec §9.2 step 1

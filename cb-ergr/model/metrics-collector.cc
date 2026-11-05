@@ -109,6 +109,11 @@ void
 MetricsCollector::Configure(const Config& cfg)
 {
     m_cfg = cfg;
+    m_loss.Configure(m_cfg.bitRateBps, m_cfg.preambleS, m_cfg.warmupS, m_cfg.simTimeS);
+    m_loss.SetDeathProbe([this](uint32_t node) {
+        auto it = m_nodes.find(node);
+        return (it != m_nodes.end() && it->second.energy) ? it->second.energy->GetDeathTimeS() : -1.0;
+    });
     std::filesystem::create_directories(m_cfg.outDir);
     if (m_cfg.logDecisions)
     {
@@ -175,6 +180,7 @@ MetricsCollector::OnFrameTx(uint32_t node,
     {
         return;
     }
+    m_loss.OnFrameTx(node, type, bytes, receiver, NowS());
     NodeStats& n = Node(node);
     n.framesTx[Idx(type)]++;
     n.bytesTx[Idx(type)] += bytes;
@@ -231,6 +237,7 @@ MetricsCollector::OnLinkEval(uint32_t txNode,
                      << ',' << rxNode << ',' << bytes << ",," << distM << ',' << snrDb << ','
                      << RxFailReasonName(reason) << '\n';
     }
+    m_loss.OnLinkEval(txNode, rxNode, type, bytes, distM, ok, NowS());
     if (type == FrameType::Data)
     {
         SnrStats& snr = m_linkSnr[{txNode, rxNode}];
@@ -283,6 +290,7 @@ MetricsCollector::OnPacketAtNode(E2EKey key, uint32_t node)
 void
 MetricsCollector::OnDataSent(E2EKey key, uint32_t node, bool isRetry)
 {
+    m_loss.OnDataKey(node, key);
     auto it = m_packets.find(key);
     if (it == m_packets.end())
     {
@@ -548,6 +556,12 @@ MetricsCollector::OnCoverageSample(uint32_t occupiedCells, uint32_t headedCells,
 }
 
 void
+MetricsCollector::OnDataDelivered(E2EKey key, uint32_t sender, uint32_t fwd)
+{
+    m_loss.OnDataDelivered(key, sender, fwd, NowS());
+}
+
+void
 MetricsCollector::OnNoHeadGiveUp(uint32_t node, uint16_t cell)
 {
     if (!Counting())
@@ -588,6 +602,10 @@ MetricsCollector::OnDeadDeclared(uint32_t node, uint32_t subject, bool byQuorum)
 void
 MetricsCollector::OnEvent(uint32_t node, const std::string& kind, const std::string& details)
 {
+    if (kind == "VOID_NACK" && Counting())
+    {
+        m_voidNacks++;
+    }
     if (m_cfg.logEvents)
     {
         m_events.push_back({NowS(), node, kind, details});
@@ -624,6 +642,10 @@ void
 MetricsCollector::Finalize()
 {
     const double endS = m_cfg.simTimeS > 0 ? m_cfg.simTimeS : NowS();
+    auto deathProbe = [this](uint32_t node) {
+        auto it = m_nodes.find(node);
+        return (it != m_nodes.end() && it->second.energy) ? it->second.energy->GetDeathTimeS() : -1.0;
+    };
 
     // close open head tenures
     for (auto& entry : m_nodes)
@@ -637,6 +659,8 @@ MetricsCollector::Finalize()
             n.headSinceS = -1.0;
         }
     }
+
+    m_loss.Finalize(deathProbe);
 
     // classify packets created inside the measured window
     std::vector<double> delays;
@@ -761,6 +785,10 @@ MetricsCollector::Finalize()
     if (m_cfg.logEvents)
     {
         WriteEvents();
+    }
+    if (m_loss.Enabled())
+    {
+        WriteLossBudget();
     }
     if (m_framesFile.is_open())
     {
@@ -1028,13 +1056,85 @@ MetricsCollector::WriteLinks()
     }
 }
 
+// One cause for every packet that was not delivered (see loss-budget.h): its drop reason if the protocol dropped it
+// knowingly, else the cause of its last failed hop, else "lost_after_receipt" / "never_sent".
+std::string
+MetricsCollector::LossCauseOf(const PacketRecord& r) const
+{
+    if (r.delivered)
+    {
+        return "";
+    }
+    if (r.dropped && r.dropReason != DropReason::TtlExpired)
+    {
+        return std::string("drop_") + DropReasonName(r.dropReason);
+    }
+    std::string hop = m_loss.PacketHopCause(r.key);
+    if (hop.empty())
+    {
+        return r.dropped ? "never_sent" : "";
+    }
+    return r.dropped || r.createdS < m_cfg.warmupS ? hop : "";
+}
+
+void
+MetricsCollector::WriteLossBudget()
+{
+    std::ofstream f(m_cfg.outDir + "/loss_budget.csv");
+    f << std::setprecision(10) << "group,key,value\n";
+    f << "hop,attempts," << m_loss.HopsTotal() << "\nhop,delivered," << m_loss.HopsDelivered() << '\n';
+    for (const auto& c : m_loss.HopCauses())
+    {
+        f << "hop," << c.first << ',' << c.second << '\n';
+    }
+    // packets created in the window and resolved, by cause
+    std::map<std::string, uint64_t> causes;
+    uint64_t resolved = 0;
+    for (const auto& entry : m_packets)
+    {
+        const PacketRecord& r = entry.second;
+        if (r.createdS < m_cfg.warmupS)
+        {
+            continue;
+        }
+        if (r.delivered)
+        {
+            causes["delivered"]++;
+            resolved++;
+        }
+        else if (r.dropped)
+        {
+            causes[LossCauseOf(r)]++;
+            resolved++;
+        }
+    }
+    f << "packet,resolved," << resolved << '\n';
+    for (const auto& c : causes)
+    {
+        f << "packet," << c.first << ',' << c.second << '\n';
+    }
+    double total = 0.0;
+    for (FrameType t : {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election, FrameType::Handover, FrameType::Nack})
+    {
+        total += m_loss.AirtimeS(t);
+    }
+    const double window = std::max(1.0, m_loss.WindowS());
+    for (FrameType t : {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election, FrameType::Handover, FrameType::Nack})
+    {
+        f << "airtime_share," << Lower(FrameTypeName(t)) << ',' << (total > 0 ? m_loss.AirtimeS(t) / total : 0.0) << '\n';
+        f << "airtime_erlang," << Lower(FrameTypeName(t)) << ',' << m_loss.AirtimeS(t) / window << '\n';
+    }
+    f << "airtime_erlang,total," << total / window << '\n';
+    f << "routing,void_nacks," << m_voidNacks << '\n';
+}
+
 void
 MetricsCollector::WritePackets()
 {
     std::ofstream f(m_cfg.outDir + "/packets.csv");
     f << std::setprecision(8);
     f << "source,seq,created_s,status,delivered_s,sink,delay_s,hops,data_tx,retx,path,drop_node,"
-         "drop_reason\n";
+         "drop_reason,loss_cause\n";
     for (const auto& entry : m_packets)
     {
         const PacketRecord& r = entry.second;
@@ -1043,7 +1143,7 @@ MetricsCollector::WritePackets()
           << (r.delivered ? r.deliveredS : -1.0) << ',' << (r.delivered ? int(r.sinkNode) : -1) << ','
           << (r.delivered ? r.deliveredS - r.createdS : -1.0) << ',' << r.hops << ',' << r.dataTx << ','
           << r.retx << ',' << r.path << ',' << (r.dropped ? int(r.dropNode) : -1) << ','
-          << (r.dropped ? DropReasonName(r.dropReason) : "") << '\n';
+          << (r.dropped ? DropReasonName(r.dropReason) : "") << ',' << LossCauseOf(r) << '\n';
     }
 }
 
