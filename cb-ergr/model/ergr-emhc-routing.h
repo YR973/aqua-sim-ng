@@ -47,11 +47,14 @@ class ErgrEmhcRouting : public AquaSimRouting
     // --- Wiring (helper calls these before Start()) ---
     void SetNodeRole(bool isSink);
     void SetSelector(Ptr<ForwarderSelector> selector) { m_selector = selector; }
+    Ptr<ForwarderSelector> GetSelector() const { return m_selector; }
     void SetMetrics(Ptr<MetricsCollector> metrics) { m_metrics = metrics; }
     void SetLocalisation(Ptr<LocalisationNoise> noise) { m_localisation = noise; }
     /// The node's own modem link budget (for selectors that predict margins).
     void SetLinkModel(std::shared_ptr<const AcousticLinkModel> link) { m_linkModel = link; }
     /// Called after every selector decision (used to measure regret against the oracle). Must not change state.
+    /// Counterfactual logging (simulator-side only): a second selector, never used for the real decision, is asked the same question.
+    void SetShadowSelector(Ptr<ForwarderSelector> shadow) { m_shadow = shadow; }
     void SetDecisionObserver(std::function<void(const PacketCtx&, const std::vector<Candidate>&, const Decision&, Time)> observer)
     {
         m_decisionObserver = observer;
@@ -182,6 +185,7 @@ class ErgrEmhcRouting : public AquaSimRouting
     bool m_retriesAlwaysAck, m_autoElection;
     double m_expiryBeacons, m_receiptKeepBeacons;
     bool m_keepRecord = true;
+    Ptr<ForwarderSelector> m_shadow;
     std::string m_censoredPolicy = "Drop";
     int m_suspectTimeouts;
     bool m_leanBeacons;

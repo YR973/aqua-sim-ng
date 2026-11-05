@@ -110,6 +110,7 @@ MetricsCollector::Configure(const Config& cfg)
 {
     m_cfg = cfg;
     m_loss.Configure(m_cfg.bitRateBps, m_cfg.preambleS, m_cfg.warmupS, m_cfg.simTimeS);
+    m_loss.EnableCounterfactual(m_cfg.logCounterfactual);
     m_loss.SetDeathProbe([this](uint32_t node) {
         auto it = m_nodes.find(node);
         return (it != m_nodes.end() && it->second.energy) ? it->second.energy->GetDeathTimeS() : -1.0;
@@ -478,6 +479,103 @@ MetricsCollector::OnLabel(uint32_t node,
 }
 
 void
+MetricsCollector::OnBeaconParts(uint32_t base, uint32_t receipts, uint32_t blob, uint32_t q)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    m_bcnBase += base;
+    m_bcnReceipts += receipts;
+    m_bcnBlob += blob;
+    m_bcnQ += q;
+    m_bcnCount++;
+}
+
+void
+MetricsCollector::OnDecisionDetail(double regretOracle, double regretVsFw, double gapTop2, bool twoViable)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    DetailBin& b = m_detailBins[static_cast<int>(NowS() / 100.0)];
+    b.n++;
+    b.regretOracle += regretOracle;
+    b.regretVsFw += regretVsFw;
+    b.gap += gapTop2;
+    b.twoViable += twoViable ? 1 : 0;
+    b.gapSmall += (twoViable && gapTop2 < 0.05) ? 1 : 0;
+}
+
+void
+MetricsCollector::WriteCost()
+{
+    std::ofstream f(m_cfg.outDir + "/cost.csv");
+    f << std::setprecision(10) << "key,value\n";
+    static const char* kinds[] = {"select", "sent", "label"};
+    for (int k = 0; k < 3; ++k)
+    {
+        std::vector<float>& v = m_cpuNs[k];
+        if (v.empty())
+        {
+            continue;
+        }
+        std::sort(v.begin(), v.end());
+        double sum = 0.0;
+        for (float x : v)
+        {
+            sum += x;
+        }
+        f << "cpu_" << kinds[k] << "_calls," << v.size() << "\ncpu_" << kinds[k] << "_us_mean," << sum / v.size() / 1000.0 << "\ncpu_" << kinds[k]
+          << "_us_p95," << v[static_cast<size_t>(0.95 * (v.size() - 1))] / 1000.0 << "\ncpu_" << kinds[k] << "_us_max," << v.back() / 1000.0 << '\n';
+    }
+    const double delivered = std::max<double>(1.0, PacketsDelivered());
+    f << "beacons_counted," << m_bcnCount << "\nbeacon_bytes_base," << m_bcnBase << "\nbeacon_bytes_receipts," << m_bcnReceipts
+      << "\nbeacon_bytes_blob," << m_bcnBlob << "\nbeacon_bytes_q," << m_bcnQ << '\n';
+    f << "beacon_base_bytes_per_delivered," << m_bcnBase / delivered << "\nbeacon_receipt_bytes_per_delivered," << m_bcnReceipts / delivered
+      << "\nbeacon_blob_bytes_per_delivered," << m_bcnBlob / delivered << "\nbeacon_q_bytes_per_delivered," << m_bcnQ / delivered << '\n';
+    if (m_diagProbe)
+    {
+        for (const auto& kv : m_diagProbe())
+        {
+            f << kv.first << ',' << kv.second << '\n';
+        }
+    }
+    if (m_neighbourProbe)
+    {
+        std::vector<uint32_t> sizes = m_neighbourProbe();
+        if (!sizes.empty())
+        {
+            std::sort(sizes.begin(), sizes.end());
+            double sum = 0.0;
+            for (uint32_t s : sizes)
+            {
+                sum += s;
+            }
+            f << "neighbour_rows_mean," << sum / sizes.size() << "\nneighbour_rows_p95," << sizes[static_cast<size_t>(0.95 * (sizes.size() - 1))]
+              << "\nneighbour_rows_max," << sizes.back() << '\n';
+        }
+    }
+    f << "peak_pending_attempts," << m_peakPending << '\n';
+    for (const auto& kv : m_costNotes)
+    {
+        f << kv.first << ',' << kv.second << '\n';
+    }
+    if (!m_detailBins.empty())
+    {
+        std::ofstream r(m_cfg.outDir + "/regret_by_time.csv");
+        r << "bin_start_s,decisions,regret_vs_oracle,regret_vs_fw,gap_top2_mean,share_two_viable,share_two_viable_gap_lt_0.05\n";
+        for (const auto& kv : m_detailBins)
+        {
+            const DetailBin& b = kv.second;
+            r << kv.first * 100 << ',' << b.n << ',' << b.regretOracle / b.n << ',' << b.regretVsFw / b.n << ',' << b.gap / b.n << ','
+              << double(b.twoViable) / b.n << ',' << double(b.gapSmall) / b.n << '\n';
+        }
+    }
+}
+
+void
 MetricsCollector::OnPendingSize(size_t n)
 {
     m_peakPending = std::max<uint64_t>(m_peakPending, n);
@@ -817,6 +915,16 @@ MetricsCollector::Finalize()
     if (m_loss.Enabled())
     {
         WriteLossBudget();
+        WriteCost();
+        if (m_cfg.logCounterfactual)
+        {
+            std::ofstream cf(m_cfg.outDir + "/counterfactual.csv");
+            cf << LossBudget::CounterfactualHeader() << '\n';
+            for (const std::string& row : m_loss.CounterfactualRows())
+            {
+                cf << row << '\n';
+            }
+        }
     }
     if (m_framesFile.is_open())
     {

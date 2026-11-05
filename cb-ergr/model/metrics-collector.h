@@ -81,6 +81,8 @@ class MetricsCollector : public Object
         bool logFrames = false;
         bool logLinks = true;
         bool logDecisions = false;
+        bool measureCpu = false;           ///< time Select / OnSent / OnLabel with std::chrono (cost.csv)
+        bool logCounterfactual = false;   ///< write counterfactual.csv (simulator-side ground truth; no node reads it)
         // Radio numbers for the per-frame-type energy accounting (summary columns energy_<type>_*_per_delivered_j).
         double bitRateBps = 0.0;       ///< 0 = accounting off
         double preambleS = 0.0;
@@ -103,6 +105,23 @@ class MetricsCollector : public Object
     // --- Frame hooks ---
     void OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, uint8_t powerLevel, int32_t receiver);
     void OnFrameRx(uint32_t node, FrameType type, uint32_t bytes, bool addressedToMe, int32_t sender);
+    /// Counterfactual logging: the eligible forwarders of the decision just made by 'node' (shadowChoice: what the shadow selector
+    /// would have chosen, -1 none, -2 member hand-off).
+    void OnCandidates(uint32_t node, const std::vector<uint16_t>& ids, int shadowChoice) { m_loss.SetCandidates(node, ids, shadowChoice); }
+    bool LogCounterfactual() const { return m_cfg.logCounterfactual; }
+
+    // --- Cost and robustness instrumentation (7 Nov 2026, Step 4); everything lands in cost.csv / regret_by_time.csv ---
+    bool MeasureCpu() const { return m_cfg.measureCpu; }
+    enum CpuKind { kCpuSelect = 0, kCpuSent = 1, kCpuLabel = 2, kCpuKinds = 3 };
+    void OnCpuSample(CpuKind kind, double ns) { m_cpuNs[kind].push_back(static_cast<float>(ns)); }
+    /// Bytes of one beacon split into its parts (fixed header, receipt bitmaps, model blob, Q value).
+    void OnBeaconParts(uint32_t base, uint32_t receipts, uint32_t blob, uint32_t q);
+    void SetSelectorDiagProbe(std::function<std::map<std::string, double>()> probe) { m_diagProbe = probe; }
+    void SetNeighbourProbe(std::function<std::vector<uint32_t>()> probe) { m_neighbourProbe = probe; }
+    void AddCostNote(const std::string& key, double value) { m_costNotes.emplace_back(key, value); }
+    /// Per decision, ground truth (simulator side): regret against the per-hop oracle and against the FW rule, the gap between the two
+    /// best arms and whether at least two arms were truly viable (hop success >= 0.5).
+    void OnDecisionDetail(double regretOracle, double regretVsFw, double gapTop2, bool twoViable);
     void OnLinkEval(uint32_t txNode,
                     uint32_t rxNode,
                     FrameType type,
@@ -308,6 +327,18 @@ class MetricsCollector : public Object
     uint64_t m_totalAttempts = 0, m_totalLabels = 0, m_falseNegatives = 0, m_labelZeros = 0;
     std::array<uint64_t, 6> m_labelsBySource{};
     uint64_t m_peakPending = 0;
+    std::array<std::vector<float>, 3> m_cpuNs;
+    uint64_t m_bcnBase = 0, m_bcnReceipts = 0, m_bcnBlob = 0, m_bcnQ = 0, m_bcnCount = 0;
+    std::function<std::map<std::string, double>()> m_diagProbe;
+    std::function<std::vector<uint32_t>()> m_neighbourProbe;
+    std::vector<std::pair<std::string, double>> m_costNotes;
+    struct DetailBin
+    {
+        uint64_t n = 0, twoViable = 0, gapSmall = 0;
+        double regretOracle = 0.0, regretVsFw = 0.0, gap = 0.0;
+    };
+    std::map<int, DetailBin> m_detailBins;   // 100 s bins
+    void WriteCost();
     uint64_t m_censored = 0, m_censoredReceived = 0, m_timeoutsFired = 0, m_timeoutsFalse = 0;
     double m_labelDelaySumS = 0.0;
     std::vector<double> m_labelDelays;

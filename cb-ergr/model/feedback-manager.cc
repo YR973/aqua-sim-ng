@@ -9,6 +9,7 @@
 #include "ns3/simulator.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace ns3
 {
@@ -72,7 +73,17 @@ FeedbackManager::Resolve(const HopKey& key, int y, LabelSource src)
                        pa.decision);
     if (pa.learn && y >= 0)
     {
-        m_selector->OnLabel(pa.decision, y, src, Simulator::Now()); // a censored label is never shown to the learner
+        if (m_metrics->MeasureCpu())
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            m_selector->OnLabel(pa.decision, y, src, Simulator::Now());
+            m_metrics->OnCpuSample(MetricsCollector::kCpuLabel,
+                                   std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count());
+        }
+        else
+        {
+            m_selector->OnLabel(pa.decision, y, src, Simulator::Now()); // a censored label is never shown to the learner
+        }
     }
     if (y == 1)
     {

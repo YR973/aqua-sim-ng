@@ -18,7 +18,9 @@
 
 #include <array>
 #include <functional>
+#include <map>
 #include <memory>
+#include <string>
 #include <cstdint>
 #include <vector>
 
@@ -161,6 +163,9 @@ class ForwarderSelector : public Object
     virtual void OnLabel(const Decision& d, int y, LabelSource src, Time now) {}
 
     virtual void OnKnownChange(ChangeEvent e, Time now) {}
+
+    /// Numeric diagnostics for the cost/robustness report (counts add up over nodes; keys starting "max_" take the maximum).
+    virtual void Diagnostics(std::map<std::string, double>& out) const {}
 
     /// False for round robin: ERGR-EMHC as published has no hop ACKs (spec §9.1 step 2).
     virtual bool UsesFeedback() const { return true; }

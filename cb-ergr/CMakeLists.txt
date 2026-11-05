@@ -55,6 +55,7 @@ build_lib(
         model/selector-q-learning.h
         model/selector-lfa-q.h
         model/oracle-evaluator.h
+        model/noise-band.h
         model/selector-oracle.h
         model/selector-cb-v5.h
         model/localisation-noise.h

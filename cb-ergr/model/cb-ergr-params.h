@@ -76,6 +76,8 @@ constexpr double kShadowSigmaDb = 5.0;   // [SPEC] S§4.5
 constexpr double kShadowTauS = 120.0;    // [SPEC] S§4.5
 constexpr double kNoiseBandXMinM = 750.0;   // [DESIGN] heterogeneous scenario: the band is the second cell column (x in [750, 1500))
 constexpr double kNoiseBandXMaxM = 1500.0;
+constexpr double kNoiseBandStartS = 0.0;    // [DESIGN] 7 Nov 2026: change scenario, the band is a burst between these times
+constexpr double kNoiseBandEndS = -1.0;     // negative = never switched off
 constexpr double kNoiseBandOffsetDb = 0.0;  // 0 = off; the heterogeneous scenario uses 10 dB
 constexpr bool kIdealLinks = false;      // [DESIGN] test 16 only: frames inside R always decode (the paper's near-error-free channel)
 constexpr double kShadowTickS = 5.0;     // [DESIGN] time grid of the process; see gm-shadowing.h

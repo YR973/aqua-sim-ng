@@ -416,6 +416,11 @@ SelectorCbV5::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligibl
         }
     }
     best.ackRequest = NeedsAck(pkt, best.width, chosen->pMean, disagree);
+    m_decisions++;
+    if (!std::isfinite(best.pMean) || !std::isfinite(best.score) || !std::isfinite(best.width))
+    {
+        m_nanDecisions++; // must stay 0: counted for the robustness report
+    }
     best.valid = true;
     // Rank of the chosen option by its mean success among the options at the chosen level (1 = best mean).
     int rank = 1;
@@ -454,6 +459,27 @@ SelectorCbV5::OnLabel(const Decision& d, int y, LabelSource src, Time now)
         x[i] = d.x[i];
     }
     m_model.UpdateWithLabel(x, y);
+    m_labels++;
+}
+
+void
+SelectorCbV5::Diagnostics(std::map<std::string, double>& out) const
+{
+    out["cb_decisions"] += static_cast<double>(m_decisions);
+    out["cb_labels"] += static_cast<double>(m_labels);
+    out["cb_nonfinite_decisions"] += static_cast<double>(m_nanDecisions);
+    out["cb_cholesky_jitters"] += m_model.NumJitters();
+    out["cb_cholesky_resets"] += m_model.NumResets();
+    double maxTheta = 0.0;
+    bool finite = true;
+    for (int i = 0; i < kDim; ++i)
+    {
+        maxTheta = std::max(maxTheta, std::fabs(m_model.Theta()[i]));
+        finite = finite && std::isfinite(m_model.Theta()[i]);
+    }
+    out["max_abs_theta"] = std::max(out.count("max_abs_theta") ? out["max_abs_theta"] : 0.0, maxTheta);
+    out["cb_nonfinite_theta_nodes"] += finite ? 0.0 : 1.0;
+    out["max_trace_A"] = std::max(out.count("max_trace_A") ? out["max_trace_A"] : 0.0, m_model.TraceOwn());
 }
 
 // K§2.3 / D§3 P8: widen the uncertainty only when a head is lost (a death or an unplanned loss).

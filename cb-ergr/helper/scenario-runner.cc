@@ -17,7 +17,12 @@
 #include "ns3/cb-features.h"
 #include "ns3/oracle-evaluator.h"
 #include "ns3/selector-cb-v5.h"
+#include "ns3/selector-fixed-weight.h"
+#include "ns3/feedback-manager.h"
+#include "ns3/cb-learner-model.h"
 #include "ns3/network-module.h"
+
+#include <sys/resource.h>
 
 #include <chrono>
 #include <cmath>
@@ -37,6 +42,8 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
 {
     c.Add("NoiseBandXMinM", &s.noiseBandXMinM, "Heterogeneous scenario: noise band start x (m)");
     c.Add("NoiseBandXMaxM", &s.noiseBandXMaxM, "Noise band end x (m)");
+    c.Add("NoiseBandStartS", &s.noiseBandStartS, "Noise burst: the band switches on at this time (s)");
+    c.Add("NoiseBandEndS", &s.noiseBandEndS, "Noise burst: the band switches off at this time (s), negative = stays on");
     c.Add("NoiseBandOffsetDb", &s.noiseBandOffsetDb, "Extra noise heard by receivers in the band (dB), 0 = off");
     c.Add("TargetLifetimeFactor", &s.targetLifetimeFactor, "CB energy price: target lifetime = factor x SimTimeS");
     c.Add("Mac", &s.mac, "Csma (listen-before-talk with backoff, as in the paper) or Aloha (Aqua-Sim broadcast MAC)");
@@ -91,6 +98,9 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("LogPackets", &s.logPackets, "Write packets.csv");
     c.Add("LogEvents", &s.logEvents, "Write events.csv");
     c.Add("LogDecisions", &s.logDecisions, "Write decisions.csv");
+    c.Add("MeasureCpu", &s.measureCpu, "Time Select, OnSent and OnLabel with std::chrono and write them to cost.csv");
+    c.Add("LogCounterfactual", &s.logCounterfactual, "Write counterfactual.csv (ground truth per eligible candidate; no node reads it)");
+    c.Add("ShadowSelectorAttributes", &s.shadowSelectorAttributes, "Attributes of the FixedWeight selector that is asked the same question as the real one in counterfactual.csv");
     c.Add("LogFrames", &s.logFrames, "Write frames.csv (large)");
 }
 
@@ -120,25 +130,43 @@ MakeRegretObserver(Ptr<OracleEvaluator> oracle,
             return success * progress - d.lambdaE * etx;
         };
         double best = -1e300, chosen = 0.0;
-        int viable = 0;
+        int viable = 0, trulyViable = 0;
+        std::vector<double> candBest;
+        // What the static rule (FW, physics weights) would have chosen at this very decision, and its true utility.
+        Decision fw = SelectByWeights(*features, params::selector::kFwWeights, params::learner::kKappaP, false, ctx, cands, now);
+        double fwUtility = 0.0;
         for (const Candidate& c : cands)
         {
             // A method without power control can only use the full level, so it is only compared with that.
             const int firstLevel = allLevels ? 0 : params::phy::kNumPowerLevels - 1;
+            double cb = -1e300;
             for (int level = firstLevel; level < params::phy::kNumPowerLevels; ++level)
             {
-                best = std::max(best, utility(c, level));
+                cb = std::max(cb, utility(c, level));
             }
+            best = std::max(best, cb);
+            candBest.push_back(cb);
             if (c.id == d.fwdId)
             {
                 chosen = utility(c, d.powerLevel);
+            }
+            if (fw.valid && c.id == fw.fwdId)
+            {
+                fwUtility = utility(c, params::phy::kNumPowerLevels - 1);
             }
             if (features->PredictedMarginDb(ctx, *c.nb, params::phy::kNumPowerLevels - 1, now) > 0.0)
             {
                 viable++;
             }
+            if (oracle->HopSuccess(nodeId, c.id, params::phy::kNumPowerLevels - 1, ctx.dataBytes, now, true) >= 0.5)
+            {
+                trulyViable++;
+            }
         }
+        std::sort(candBest.begin(), candBest.end(), std::greater<double>());
+        const double gap = candBest.size() >= 2 ? candBest[0] - candBest[1] : 0.0;
         metrics->OnRegret(std::max(0.0, best - chosen), viable >= 2);
+        metrics->OnDecisionDetail(std::max(0.0, best - chosen), fwUtility - chosen, gap, trulyViable >= 2);
     };
 }
 
@@ -181,6 +209,8 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     mc.logEvents = s.logEvents;
     mc.logFrames = s.logFrames;
     mc.logDecisions = s.logDecisions;
+    mc.logCounterfactual = s.logCounterfactual;
+    mc.measureCpu = s.measureCpu;
     mc.bitRateBps = s.bitRateBps;
     mc.preambleS = s.preambleS;
     mc.txPowerFullW = s.txPowerFullW;
@@ -201,6 +231,8 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     propagation->SetAttribute("NoiseBandXMinM", DoubleValue(s.noiseBandXMinM));
     propagation->SetAttribute("NoiseBandXMaxM", DoubleValue(s.noiseBandXMaxM));
     propagation->SetAttribute("NoiseBandOffsetDb", DoubleValue(s.noiseBandOffsetDb));
+    propagation->SetAttribute("NoiseBandStartS", DoubleValue(s.noiseBandStartS));
+    propagation->SetAttribute("NoiseBandEndS", DoubleValue(s.noiseBandEndS));
     CbErgrHelper::ConnectLinkTrace(propagation, metrics);
 
     AquaSimHelper asHelper = AquaSimHelper::Default();
@@ -379,6 +411,22 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         Ptr<ForwarderSelector> selector = selectorFactory.Create<ForwarderSelector>();
         selector->SetOracle(oracle); // only the oracle selectors keep it
         routing->SetSelector(selector);
+        if (s.logCounterfactual)
+        {
+            // What would the static rule (FW) have chosen at this very decision? Simulator-side what-if, never used by the node.
+            ObjectFactory shadowFactory;
+            shadowFactory.SetTypeId("ns3::cbergr::SelectorFixedWeight");
+            std::stringstream sattrs(s.shadowSelectorAttributes);
+            for (std::string item; std::getline(sattrs, item, ';');)
+            {
+                size_t eq = item.find('=');
+                if (eq != std::string::npos)
+                {
+                    shadowFactory.Set(item.substr(0, eq), StringValue(item.substr(eq + 1)));
+                }
+            }
+            routing->SetShadowSelector(shadowFactory.Create<ForwarderSelector>());
+        }
         if (s.computeRegret)
         {
             routing->SetDecisionObserver(MakeRegretObserver(oracle, linkModel, metrics, node->GetId(), s));
@@ -494,6 +542,35 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         });
     }
 
+    // Cost and robustness probes (reporting only).
+    metrics->SetSelectorDiagProbe([routings]() {
+        std::map<std::string, double> out;
+        for (const Ptr<ErgrEmhcRouting>& r : routings)
+        {
+            if (!r->IsSink() && r->GetSelector())
+            {
+                r->GetSelector()->Diagnostics(out);
+            }
+        }
+        return out;
+    });
+    metrics->SetNeighbourProbe([routings]() {
+        std::vector<uint32_t> sizes;
+        for (const Ptr<ErgrEmhcRouting>& r : routings)
+        {
+            if (!r->IsSink() && r->IsAlive())
+            {
+                sizes.push_back(static_cast<uint32_t>(r->Table().Size()));
+            }
+        }
+        return sizes;
+    });
+    metrics->AddCostNote("sizeof_neighbour_entry_bytes", sizeof(NeighbourEntry));
+    metrics->AddCostNote("sizeof_pending_attempt_bytes", sizeof(PendingAttempt));
+    metrics->AddCostNote("sizeof_held_packet_bytes", sizeof(HeldPacket));
+    metrics->AddCostNote("sizeof_cb_model_bytes", sizeof(CbLearnerModel<9>));
+    metrics->AddCostNote("sizeof_decision_bytes", sizeof(Decision));
+
     // -------------------------------------------------------------- run ----
     Simulator::Schedule(Seconds(s.warmupS), &MetricsCollector::SnapshotEnergyAtWarmup, metrics);
     Simulator::Schedule(Seconds(s.simTimeS), [csmaMacs, metrics]() {
@@ -512,6 +589,12 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     Simulator::Run();
     double wallS = std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
     Simulator::Destroy();
+    {
+        struct rusage ru;
+        getrusage(RUSAGE_SELF, &ru);
+        std::ofstream res(s.outDir + "/resources.csv");
+        res << "key,value\nwall_s," << wallS << "\nmax_rss_kb," << ru.ru_maxrss << '\n';
+    }
 
     ScenarioResult result;
     result.pdr = metrics->Pdr();

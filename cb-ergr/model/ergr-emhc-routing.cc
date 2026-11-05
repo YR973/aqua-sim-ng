@@ -22,6 +22,7 @@
 #include "ns3/uinteger.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <sstream>
 
@@ -401,6 +402,11 @@ ErgrEmhcRouting::Start()
         services.isNeighbourCell = [this](uint16_t cell) { return Grid().AreNeighbours(m_cell, cell, m_faceOnly); };
         m_selector->SetServices(services);
         m_selector->Start();
+        if (m_shadow)
+        {
+            m_shadow->SetServices(services);
+            m_shadow->Start();
+        }
     }
     UpdateSelfEstimate();
     UpdateOwnCell();
@@ -662,6 +668,7 @@ ErgrEmhcRouting::SendBeacon()
     }
 
     m_selector->OnBeaconTx(hdr, Simulator::Now()); // may attach a model blob (spec §8.10)
+    m_metrics->OnBeaconParts(hdr.BaseBytes(), hdr.ReceiptBytes(), hdr.BlobBytes(), hdr.QBytes());
     Ptr<Packet> packet = Create<Packet>(0);
     packet->AddHeader(hdr);
     TransmitFrame(packet, FrameType::Beacon, kNone, params::phy::kNumPowerLevels - 1);
@@ -1165,7 +1172,18 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
     ctx.myBattery = ResidualFraction();
     ctx.myEnergyJ = GetNetDevice()->GetPhy()->EM()->GetEnergy();
     ctx.dataBytes = m_payloadBytes + 17;
-    Decision decision = m_selector->Select(ctx, eligible, now);
+    Decision decision;
+    if (m_metrics->MeasureCpu())
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        decision = m_selector->Select(ctx, eligible, now);
+        m_metrics->OnCpuSample(MetricsCollector::kCpuSelect,
+                               std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count());
+    }
+    else
+    {
+        decision = m_selector->Select(ctx, eligible, now);
+    }
     if (!decision.valid)
     {
         HandleVoid(pkt);
@@ -1180,8 +1198,33 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
     {
         m_decisionObserver(ctx, eligible, decision, now);
     }
+    if (m_metrics->LogCounterfactual())
+    {
+        std::vector<uint16_t> ids;
+        for (const Candidate& c : eligible)
+        {
+            ids.push_back(c.id);
+        }
+        int shadowChoice = -1;
+        if (m_shadow)
+        {
+            Decision sd = m_shadow->Select(ctx, eligible, now); // simulator-side what-if: not used, not learned from
+            shadowChoice = sd.valid ? sd.fwdId : -1;
+        }
+        m_metrics->OnCandidates(m_id, ids, shadowChoice);
+    }
     SendData(pkt, decision.fwdId, decision.powerLevel, decision.ackRequest, &decision);
-    m_selector->OnSent(decision, now);
+    if (m_metrics->MeasureCpu())
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        m_selector->OnSent(decision, now);
+        m_metrics->OnCpuSample(MetricsCollector::kCpuSent,
+                               std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count());
+    }
+    else
+    {
+        m_selector->OnSent(decision, now);
+    }
 }
 
 // Members do not choose forwarders: they give their packet to a head of their own cell, in turn (K§2.1).
@@ -1235,6 +1278,15 @@ ErgrEmhcRouting::HandOffToHead(HeldPacket pkt)
     }
     const NeighbourEntry* head = heads[m_headRoundRobin++ % heads.size()];
     pkt.hpkt = head->hmin; // the head restarts the hop budget from its own Hmin
+    if (m_metrics->LogCounterfactual())
+    {
+        std::vector<uint16_t> ids;
+        for (const NeighbourEntry* h : heads)
+        {
+            ids.push_back(h->id);
+        }
+        m_metrics->OnCandidates(m_id, ids, -2); // -2: a member hand-off, not a forwarder choice
+    }
     SendData(pkt, head->id, params::phy::kNumPowerLevels - 1, m_feedback != nullptr, nullptr);
 }
 

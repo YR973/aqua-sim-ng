@@ -82,6 +82,7 @@ class SelectorCbV5 : public ForwarderSelector
     // --- Learning ---
     void OnSent(const Decision& d, Time now) override;
     void OnLabel(const Decision& d, int y, LabelSource src, Time now) override;
+    void Diagnostics(std::map<std::string, double>& out) const override;
     void OnKnownChange(ChangeEvent e, Time now) override;
 
     // --- Sharing ---
@@ -126,6 +127,7 @@ class SelectorCbV5 : public ForwarderSelector
     AckMode m_ackMode;
     AckGate m_ackGate;
     double m_probStdThreshold;
+    uint64_t m_decisions = 0, m_labels = 0, m_nanDecisions = 0;
     int m_disagreeDraws;
     double m_lambdaInit, m_eta, m_targetLifetimeS, m_priceTickS;
     double m_tauSync, m_cosGate, m_matureTrace, m_betaInflate;

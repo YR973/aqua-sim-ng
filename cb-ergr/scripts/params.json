@@ -1,7 +1,9 @@
 {
  "channel": {
   "kIdealLinks": false,
+  "kNoiseBandEndS": -1.0,
   "kNoiseBandOffsetDb": 0.0,
+  "kNoiseBandStartS": 0.0,
   "kNoiseBandXMaxM": 1500.0,
   "kNoiseBandXMinM": 750.0,
   "kShadowSigmaDb": 5.0,

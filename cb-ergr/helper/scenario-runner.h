@@ -23,6 +23,8 @@ struct ScenarioSettings
     double noiseBandXMinM = params::channel::kNoiseBandXMinM;
     double noiseBandXMaxM = params::channel::kNoiseBandXMaxM;
     double noiseBandOffsetDb = params::channel::kNoiseBandOffsetDb;
+    double noiseBandStartS = params::channel::kNoiseBandStartS;
+    double noiseBandEndS = params::channel::kNoiseBandEndS;
     double targetLifetimeFactor = params::price::kTargetLifetimeRunFactor;
     std::string mac = params::mac::kMac;   // "Csma" or "Aloha"
     std::string protocol = "G";            // "G" = ERGR-EMHC-g, "P0" = ERGR-EMHC as published
@@ -83,6 +85,9 @@ struct ScenarioSettings
     bool logPackets = params::logging::kLogPackets;
     bool logEvents = params::logging::kLogEvents;
     bool logDecisions = params::logging::kLogDecisions;
+    bool measureCpu = false;               // time Select/OnSent/OnLabel (cost.csv); off by default, no overhead
+    bool logCounterfactual = false;        // counterfactual.csv: would the frame have reached each eligible candidate? (simulator side)
+    std::string shadowSelectorAttributes = ""; // attributes of the FixedWeight shadow selector used for counterfactual.csv ("" = physics weights)
     bool logFrames = params::logging::kLogFrames;
 };
 

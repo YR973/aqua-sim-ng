@@ -30,6 +30,15 @@ LossBudget::Configure(double bitRateBps, double preambleS, double warmupS, doubl
 }
 
 void
+LossBudget::SetCandidates(uint32_t node, const std::vector<uint16_t>& cands, int shadowChoice)
+{
+    if (m_cf)
+    {
+        m_pendingCand[node] = {cands, shadowChoice};
+    }
+}
+
+void
 LossBudget::OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t receiver, double nowS)
 {
     if (!Enabled() || nowS < m_warmupS)
@@ -46,6 +55,21 @@ LossBudget::OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t rec
     a.sender = node;
     a.fwd = static_cast<uint32_t>(receiver);
     a.txS = nowS;
+    if (m_cf)
+    {
+        a.nth = ++m_nthAttempt[std::make_pair(a.key.source, a.key.seq)];
+        auto pc = m_pendingCand.find(node);
+        if (pc != m_pendingCand.end())
+        {
+            a.cand = pc->second.first;
+            a.shadow = pc->second.second;
+            m_pendingCand.erase(pc);
+        }
+        if (a.cand.empty())
+        {
+            a.cand.push_back(static_cast<uint16_t>(receiver));
+        }
+    }
     m_attempts.push_back(a);
     const size_t idx = m_attempts.size() - 1;
     m_pending.push_back(idx);
@@ -117,6 +141,10 @@ LossBudget::OnLinkEval(uint32_t txNode, uint32_t rxNode, FrameType type, uint32_
         if (b != m_bound.end() && b->second.first == nowS)
         {
             Attempt& a = m_attempts[b->second.second];
+            if (m_cf && std::find(a.cand.begin(), a.cand.end(), static_cast<uint16_t>(rxNode)) != a.cand.end())
+            {
+                a.eval[rxNode] = {decodable, arrS, arrS + air};
+            }
             if (a.fwd == rxNode)
             {
                 a.evaluated = true;
@@ -148,6 +176,85 @@ LossBudget::OnDataDelivered(E2EKey key, uint32_t sender, uint32_t fwd, double no
     }
 }
 
+LossBudget::Why
+LossBudget::WhyLostAt(const Attempt& a, uint32_t rx, bool evaluated, bool decodable, double arrS, double arrE) const
+{
+    Why w;
+    if (!evaluated)
+    {
+        w.cause = "out_of_range";
+        return w;
+    }
+    if (!decodable)
+    {
+        w.cause = "per_loss";
+        return w;
+    }
+    const double death = m_deathTimeS ? m_deathTimeS(rx) : -1.0;
+    if (death >= 0.0 && death <= arrE)
+    {
+        w.cause = "receiver_dead";
+        return w;
+    }
+    bool halfDuplex = false;
+    auto air = m_air.find(rx);
+    if (air != m_air.end())
+    {
+        for (const auto& iv : air->second)
+        {
+            if (iv.first <= arrS + 1e-9 && iv.second > arrS + 1e-9)
+            {
+                halfDuplex = true; // the PHY checks "sending" at the instant the frame starts to arrive
+            }
+        }
+    }
+    bool data = false, ctl = false, ack = false;
+    auto arr = m_arrivals.find(rx);
+    if (arr != m_arrivals.end())
+    {
+        for (const Arrival& o : arr->second)
+        {
+            if (o.tx == a.sender && std::fabs(o.s - arrS) < 1e-7)
+            {
+                continue; // the frame itself
+            }
+            if (o.s < arrE && o.e > arrS)
+            {
+                data = data || o.type == FrameType::Data;
+                if (o.type == FrameType::Data)
+                {
+                    w.dataDecodable = w.dataDecodable || o.ok;
+                    w.dataStartsInside = w.dataStartsInside || (o.s >= arrS);
+                    if (o.attempt >= 0)
+                    {
+                        w.samePacket = w.samePacket || (m_attempts[o.attempt].key == a.key);
+                        w.sameSender = w.sameSender || (o.tx == a.sender);
+                    }
+                }
+                ack = ack || o.type == FrameType::Ack || o.type == FrameType::Nack;
+                ctl = ctl || o.type == FrameType::Beacon || o.type == FrameType::Election || o.type == FrameType::Handover;
+            }
+        }
+    }
+    if (halfDuplex)
+    {
+        w.cause = "half_duplex";
+    }
+    else if (data)
+    {
+        w.cause = "collision_with_data";
+    }
+    else if (ctl)
+    {
+        w.cause = "collision_with_beacon_hello";
+    }
+    else if (ack)
+    {
+        w.cause = "collision_with_ack_nack";
+    }
+    return w;
+}
+
 void
 LossBudget::Classify(Attempt& a)
 {
@@ -161,106 +268,79 @@ LossBudget::Classify(Attempt& a)
         return; // outside the window of the measurement; the last seconds may still be in flight
     }
     m_hopsTotal++;
+    // Counterfactual: would the same frame have reached each eligible candidate?
+    auto code = [](const std::string& cause) {
+        if (cause.empty()) return 'R';
+        if (cause == "out_of_range") return 'O';
+        if (cause == "per_loss") return 'P';
+        if (cause == "half_duplex") return 'H';
+        if (cause == "receiver_dead") return 'D';
+        return 'C';
+    };
+    std::string chosenCause;
     if (a.received)
     {
         m_hopsDelivered++;
-        return;
-    }
-    std::string cause;
-    if (!a.bound)
-    {
-        cause = "never_on_air";
-    }
-    else if (!a.evaluated)
-    {
-        cause = "out_of_range";
-    }
-    else if (!a.decodable)
-    {
-        cause = "per_loss";
     }
     else
     {
-        const double death = m_deathTimeS ? m_deathTimeS(a.fwd) : -1.0;
-        if (death >= 0.0 && death <= a.arrE)
+        std::string cause;
+        if (!a.bound)
         {
-            cause = "receiver_dead";
+            cause = "never_on_air";
         }
         else
         {
-            bool halfDuplex = false;
-            for (const auto& iv : m_air[a.fwd])
+            Why w = WhyLostAt(a, a.fwd, a.evaluated, a.decodable, a.arrS, a.arrE);
+            cause = w.cause.empty() ? "unexplained_phy_busy" : w.cause;
+            if (cause == "collision_with_data")
             {
-                if (iv.first <= a.arrS + 1e-9 && iv.second > a.arrS + 1e-9)
-                {
-                    halfDuplex = true; // the PHY checks "sending" at the instant the frame starts to arrive
-                }
-            }
-            bool data = false, ctl = false, ack = false, samePacket = false, sameSender = false;
-            bool dataDecodable = false, dataStartsInside = false;
-            for (const Arrival& o : m_arrivals[a.fwd])
-            {
-                if (o.tx == a.sender && std::fabs(o.s - a.arrS) < 1e-7)
-                {
-                    continue; // the frame itself
-                }
-                if (o.s < a.arrE && o.e > a.arrS)
-                {
-                    data = data || o.type == FrameType::Data;
-                    if (o.type == FrameType::Data)
-                    {
-                        dataDecodable = dataDecodable || o.ok;
-                        dataStartsInside = dataStartsInside || (o.s >= a.arrS);
-                    }
-                    if (o.type == FrameType::Data && o.attempt >= 0)
-                    {
-                        samePacket = samePacket || (m_attempts[o.attempt].key == a.key);
-                        sameSender = sameSender || (o.tx == a.sender);
-                    }
-                    ack = ack || o.type == FrameType::Ack || o.type == FrameType::Nack;
-                    ctl = ctl || o.type == FrameType::Beacon || o.type == FrameType::Election || o.type == FrameType::Handover;
-                }
-            }
-            if (halfDuplex)
-            {
-                cause = "half_duplex";
-            }
-            else if (data)
-            {
-                cause = "collision_with_data";
-                // Why it matters for transmit-power control (CHANGELOG 7 Nov): in this PHY a DECODABLE overheard frame locks the receiver in
-                // RECV (a later frame is lost) while an UNDECODABLE one only sets the collision flag, which the next decodable arrival resets.
-                m_hopCauses[dataDecodable ? "  of which: some overlapping DATA frame was decodable at the victim receiver"
-                                          : "  of which: every overlapping DATA frame was undecodable at the victim receiver"]++;
-                if (dataStartsInside)
-                {
-                    m_hopCauses["  of which: an overlapping DATA frame started inside the victim's window"]++;
-                }
-                if (samePacket)
+                if (w.samePacket)
                 {
                     m_hopCauses["  of which: the other DATA frame is the same packet"]++;
                 }
-                if (sameSender)
+                if (w.sameSender)
                 {
                     m_hopCauses["  of which: the other DATA frame has the same sender"]++;
                 }
+                // Why it matters for transmit-power control (CHANGELOG 7 Nov): in this PHY a DECODABLE overheard frame locks the receiver in
+                // RECV (a later frame is lost) while an UNDECODABLE one only sets the collision flag, which the next decodable arrival resets.
+                m_hopCauses[w.dataDecodable ? "  of which: some overlapping DATA frame was decodable at the victim receiver"
+                                            : "  of which: every overlapping DATA frame was undecodable at the victim receiver"]++;
+                if (w.dataStartsInside)
+                {
+                    m_hopCauses["  of which: an overlapping DATA frame started inside the victim's window"]++;
+                }
             }
-            else if (ctl)
+        }
+        a.cause = cause;
+        m_hopCauses[cause]++;
+        chosenCause = cause;
+    }
+    if (m_cf && a.bound && !a.cand.empty())
+    {
+        std::string cands;
+        for (uint16_t c : a.cand)
+        {
+            char status;
+            if (c == a.fwd)
             {
-                cause = "collision_with_beacon_hello";
-            }
-            else if (ack)
-            {
-                cause = "collision_with_ack_nack";
+                status = a.received ? 'R' : code(chosenCause == "unexplained_phy_busy" ? "collision" : chosenCause);
             }
             else
             {
-                cause = "unexplained_phy_busy";
+                auto ev = a.eval.find(c);
+                const bool in = ev != a.eval.end();
+                Why w = WhyLostAt(a, c, in, in && ev->second.decodable, in ? ev->second.arrS : 0.0, in ? ev->second.arrE : 0.0);
+                status = code(w.cause);
             }
+            cands += (cands.empty() ? "" : "|") + std::to_string(c) + ":" + status;
         }
+        char line[512];
+        std::snprintf(line, sizeof(line), "%.3f,%u,%u,%u,%u,%u,%d,%s,%d,%zu,", a.txS, a.sender, a.key.source, a.key.seq, a.nth, a.fwd,
+                      a.received ? 1 : 0, a.received ? "ok" : chosenCause.c_str(), a.shadow, a.cand.size());
+        m_cfRows.push_back(std::string(line) + cands);
     }
-    a.cause = cause;
-    m_hopCauses[cause]++;
 }
 
 // Classification needs the arrivals around the attempt, which are only kept for a while: do it as soon as the outcome is

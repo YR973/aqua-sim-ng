@@ -214,6 +214,7 @@ class CbLearnerModel
     double LogDetEffective() const { return LogDetFromChol(m_L); }
     double TraceOwn() const { return m_A.Trace(); }
     int NumResets() const { return m_resets; }
+    int NumJitters() const { return m_jitters; }
 
     /// Effective precision A_own + sum of aged shared diagonals, at the current clock.
     MatD EffectivePrecision() const
@@ -244,6 +245,10 @@ class CbLearnerModel
     {
         MatD eff = EffectivePrecision();
         CholeskyStatus status = CholeskyWithFallback(eff, m_L, m_cfg.lambda0);
+        if (status == CholeskyStatus::Jittered)
+        {
+            ++m_jitters;
+        }
         if (status == CholeskyStatus::Reset)
         {
             // Numerical trouble: forget everything learned about uncertainty.
@@ -262,6 +267,7 @@ class CbLearnerModel
     double m_lastDiscountS = 0.0;
     double m_clockS = 0.0;
     int m_resets = 0;
+    int m_jitters = 0;
 };
 
 /// One same-cell peer's shared model, as received on a beacon (spec §8.10).

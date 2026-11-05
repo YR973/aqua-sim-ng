@@ -49,6 +49,14 @@ class LossBudget
     void SetDeathProbe(std::function<double(uint32_t)> probe) { m_deathTimeS = probe; }
     bool Enabled() const { return m_bitRateBps > 0.0; }
 
+    /// Counterfactual log (simulator side only): for every DATA attempt, whether the same frame would have been received by each
+    /// eligible candidate, given what really happened at that candidate (see CHANGELOG 7 Nov, Step 2).
+    void EnableCounterfactual(bool on) { m_cf = on; }
+    void SetCandidates(uint32_t node, const std::vector<uint16_t>& cands, int shadowChoice);
+    /// One CSV line per classified attempt (header from CounterfactualHeader()).
+    const std::vector<std::string>& CounterfactualRows() const { return m_cfRows; }
+    static const char* CounterfactualHeader() { return "t,sender,source,seq,attempt_of_packet,chosen,chosen_received,chosen_cause,shadow,n_cand,candidates"; }
+
     void OnDataKey(uint32_t sender, E2EKey key) { m_lastKey[sender] = key; }
     void OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t receiver, double nowS);
     /// 'dataId' (DATA frames only) = sourceId << 32 | sourceSeq << 16 | forwarderId, read from the frame header by the channel:
@@ -80,6 +88,16 @@ class LossBudget
         double arrS = -1.0, arrE = -1.0;
         std::string cause;
         bool classified = false;
+        // counterfactual (only when enabled)
+        std::vector<uint16_t> cand;
+        int shadow = -1;
+        struct Eval
+        {
+            bool decodable = false;
+            double arrS = 0.0, arrE = 0.0;
+        };
+        std::map<uint32_t, Eval> eval;     // per candidate that was within range of the transmission
+        uint8_t nth = 1;                   // how many DATA attempts this sender had made for this packet so far
     };
     struct Arrival
     {
@@ -90,6 +108,13 @@ class LossBudget
         bool ok = true;  // decodable at this receiver (a decodable frame also locks the receiver in RECV; an undecodable one only sets the collision flag)
     };
 
+    /// Why a copy of attempt 'a' would be lost at receiver 'rx' ("" = nothing explains a loss). Also fills the detail flags.
+    struct Why
+    {
+        std::string cause;
+        bool samePacket = false, sameSender = false, dataDecodable = false, dataStartsInside = false;
+    };
+    Why WhyLostAt(const Attempt& a, uint32_t rx, bool evaluated, bool decodable, double arrS, double arrE) const;
     void Classify(Attempt& a);
     void ClassifyReady(double nowS);
     double Airtime(uint32_t bytes) const { return m_preambleS + bytes * 8.0 / m_bitRateBps; }
@@ -108,6 +133,10 @@ class LossBudget
     std::map<std::tuple<uint16_t, uint16_t>, size_t> m_lastAttemptOfPacket;
     std::map<std::string, uint64_t> m_hopCauses;
     uint64_t m_hopsTotal = 0, m_hopsDelivered = 0;
+    bool m_cf = false;
+    std::map<uint32_t, std::pair<std::vector<uint16_t>, int>> m_pendingCand;   // per sender: candidates of the decision just made
+    std::map<std::pair<uint16_t, uint16_t>, uint8_t> m_nthAttempt;              // (source, seq) -> attempts so far (any node)
+    std::vector<std::string> m_cfRows;
 };
 
 } // namespace cbergr

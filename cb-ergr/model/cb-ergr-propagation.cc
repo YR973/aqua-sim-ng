@@ -94,6 +94,12 @@ CbErgrPropagation::GetTypeId()
             .AddAttribute("NoiseBandXMaxM", "Noise band ends at this x (m).", DoubleValue(params::channel::kNoiseBandXMaxM),
                           MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandXMax, &CbErgrPropagation::GetNoiseBandXMax),
                           MakeDoubleChecker<double>())
+            .AddAttribute("NoiseBandStartS", "The noise band switches on at this time (s).", DoubleValue(params::channel::kNoiseBandStartS),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandStart, &CbErgrPropagation::GetNoiseBandStart),
+                          MakeDoubleChecker<double>(0.0))
+            .AddAttribute("NoiseBandEndS", "... and off at this time (s); negative = stays on.", DoubleValue(params::channel::kNoiseBandEndS),
+                          MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandEnd, &CbErgrPropagation::GetNoiseBandEnd),
+                          MakeDoubleChecker<double>())
             .AddAttribute("NoiseBandOffsetDb", "Extra noise heard by receivers inside the band (dB); 0 = off.",
                           DoubleValue(params::channel::kNoiseBandOffsetDb),
                           MakeDoubleAccessor(&CbErgrPropagation::SetNoiseBandOffset, &CbErgrPropagation::GetNoiseBandOffset),
@@ -127,7 +133,8 @@ CbErgrPropagation::CbErgrPropagation()
       m_calibFrameBytes(params::phy::kCalibFrameBytes),
       m_extraLossProbability(0.0),
       m_idealLinks(params::channel::kIdealLinks),
-      m_noiseBand{params::channel::kNoiseBandXMinM, params::channel::kNoiseBandXMaxM, params::channel::kNoiseBandOffsetDb}
+      m_noiseBand{params::channel::kNoiseBandXMinM, params::channel::kNoiseBandXMaxM, params::channel::kNoiseBandOffsetDb,
+                  params::channel::kNoiseBandStartS, params::channel::kNoiseBandEndS}
 {
     m_extraLossDraw = CreateObject<UniformRandomVariable>();
     m_shadowing = CreateObject<GmShadowing>();
@@ -237,7 +244,7 @@ CbErgrPropagation::ReceivedCopies(Ptr<AquaSimNetDevice> s,
         const uint32_t receiverId = receiver->GetNode()->GetId();
 
         const double shadowDb = m_shadowing->GetShadowDb(senderId, receiverId, now) +
-                                m_noiseBand.SnrChangeDb(receiverMobility->GetPosition());
+                                m_noiseBand.SnrChangeDb(receiverMobility->GetPosition(), now.GetSeconds());
         const double snrDb = m_link->SnrDb(sourceLevelDb, distanceM, shadowDb);
         const double per = m_link->PerFromSnr(snrDb, frameBytes);
         bool decodable = (m_lossDraw->GetValue() >= per) || m_idealLinks; // the draw is always consumed

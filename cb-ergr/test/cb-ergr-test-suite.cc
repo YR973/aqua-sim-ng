@@ -30,6 +30,7 @@
 #include "ns3/ergr-headers.h"
 #include "ns3/grid-geometry.h"
 #include "ns3/neighbour-table.h"
+#include "ns3/noise-band.h"
 #include "ns3/recent-set.h"
 #include "ns3/scenario-runner.h"
 #include "ns3/energy-price.h"
@@ -1725,6 +1726,77 @@ class FramesForOtherNodesChangeNothing : public TestCase
         NS_TEST_ASSERT_MSG_EQ(net.metrics->TotalLabels(), labelsBefore, "no label from a foreign ACK/NACK");
         NS_TEST_ASSERT_MSG_EQ(net.metrics->PacketsDelivered(), deliveredBefore, "a foreign DATA frame is not forwarded or delivered");
         Simulator::Destroy();
+        if (!std::getenv("CBERGR_KEEP"))
+        {
+            std::filesystem::remove_all(dir);
+        }
+    }
+};
+
+// R3 Step 2/3: the noise burst window and the counterfactual log.
+class NoiseBurstAndCounterfactualLogAreConsistent : public TestCase
+{
+  public:
+    NoiseBurstAndCounterfactualLogAreConsistent()
+        : TestCase("R3-2,3: noise band is on only inside its time window; counterfactual.csv agrees with the ground truth")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        NoiseBand band;
+        band.xMinM = 750.0;
+        band.xMaxM = 1500.0;
+        band.offsetDb = 10.0;
+        band.startS = 800.0;
+        band.endS = 1400.0;
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 0, 0), 700.0), 0.0, 1e-12, "before the burst");
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 0, 0), 900.0), -10.0, 1e-12, "inside the burst and the band");
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(500, 0, 0), 900.0), 0.0, 1e-12, "outside the band");
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 0, 0), 1400.0), 0.0, 1e-12, "after the burst");
+        band.endS = -1.0;
+        NS_TEST_ASSERT_MSG_EQ_TOL(band.SnrChangeDb(Vector(1000, 0, 0), 5000.0), -10.0, 1e-12, "negative end = stays on");
+
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-cf";
+        ScenarioSettings st;
+        st.outDir = dir;
+        st.seed = 4;
+        st.numNodes = 60;
+        st.simTimeS = 900;
+        st.warmupS = 300;
+        st.pktRateHz = 0.05;
+        st.currentSpeed = 0.0;
+        st.selector = "FixedWeight";
+        st.logCounterfactual = true;
+        ScenarioConfig config;
+        RegisterSettings(config, st);
+        RunScenario(st, config);
+        std::vector<CsvRow> rows = ReadCsv(dir + "/counterfactual.csv");
+        NS_TEST_ASSERT_MSG_EQ((rows.size() > 100), true, "attempts were logged");
+        size_t routed = 0, shadowEqualsChosen = 0;
+        for (const CsvRow& r : rows)
+        {
+            const std::string chosen = r.at("chosen");
+            bool found = false;
+            std::stringstream ss(r.at("candidates"));
+            for (std::string item; std::getline(ss, item, '|');)
+            {
+                const size_t colon = item.find(':');
+                if (item.substr(0, colon) == chosen)
+                {
+                    found = true;
+                    NS_TEST_ASSERT_MSG_EQ((item.substr(colon + 1) == "R"), (r.at("chosen_received") == "1"), "chosen candidate: R iff received");
+                }
+            }
+            NS_TEST_ASSERT_MSG_EQ(found, true, "the chosen forwarder is one of the candidates");
+            if (r.at("shadow") != "-2")
+            {
+                routed++;
+                shadowEqualsChosen += (r.at("shadow") == chosen) ? 1 : 0;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(routed, shadowEqualsChosen, "with FW as the real selector the FW shadow always agrees");
         if (!std::getenv("CBERGR_KEEP"))
         {
             std::filesystem::remove_all(dir);
@@ -3434,6 +3506,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new LinearQNewTargetBootstrapsFailuresFromTheOwnValue, TestCase::QUICK);
         AddTestCase(new ThompsonDisagreeGateAsksOnlyWhenTheChoiceIsUncertain, TestCase::QUICK);
         AddTestCase(new LossBudgetHopCountMatchesTruthUnderAloha, TestCase::QUICK);
+        AddTestCase(new NoiseBurstAndCounterfactualLogAreConsistent, TestCase::QUICK);
     }
 };
 
