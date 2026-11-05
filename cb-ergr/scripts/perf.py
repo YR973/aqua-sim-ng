@@ -35,12 +35,15 @@ METHODS = collections.OrderedDict([
     ("QlLegacy", ("QLearning", "Legacy=true")),
     ("CARP-EWMA", ("CarpEwma", "")),
     ("Oracle", ("Oracle", "")),
+    # CARP-EWMA with an ACK on every first attempt: the same feedback policy as FW / CB (its default is "no ACK, labels from bitmaps")
+    ("CARP-ACK", ("CarpEwma", "AckRequest=true")),
     # ACK-gate variants (variants part only)
     ("CB-warm+Logit", ("CbV5", "AckMode=Gated;AckGate=Logit;PriorWeights=" + PHYS + ";NeighbourPrior=true")),
     ("CB-warm+ProbStd", ("CbV5", "AckMode=Gated;AckGate=ProbStd;PriorWeights=" + PHYS + ";NeighbourPrior=true")),
     ("CB-warm+TD", ("CbV5", "AckMode=Gated;AckGate=ThompsonDisagree;PriorWeights=" + PHYS + ";NeighbourPrior=true")),
 ])
 MAIN = ["RR", "RR+FB", "FW", "CB-cold", "CB-warm", "QL", "QlLegacy", "CARP-EWMA", "Oracle"]
+# CARP-ACK is run with `--methods FW,CARP-ACK` into the same OUTROOT afterwards; the tables then include it
 
 
 def run(binary, out, method, n, ns, seed, extra=(), log_packets=False):

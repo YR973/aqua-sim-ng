@@ -47,10 +47,15 @@
 2. State on 5 Nov 2026: ERGR-EMHC-g and P0 run with the paper's radio, energy and traffic, CSMA MAC (`Mac=Csma|Aloha`), lean beacons default, equal-Hmin fallback, CB lifetime = 2 x run length; ProbStd ACK gate ablation (+0.046 PDR, -33% ACK frames); heterogeneous noise-band scenario; quorum detection off by default.
 3. Not built: N-B (members sleep), N-D early receipt, start-up wave metrics (P6), design-P7 prior precision, optional 10th feature (onward), `Link=Linear`, learners on P0, a fix for the head-discovery gap.
 
+## State on 7 Nov 2026 (after the label/baseline fixes and the Step 2-4 reports)
+- Done and committed (CHANGELOG 7 Nov 10:00, 16:00, 22:00): late-evidence/censored labels, QL/LinQ target (+Legacy), ThompsonDisagree gate, loss-budget binding by identity, overhearing audit test, counterfactual log, noise burst, 9-method performance table (20 seeds), change scenarios, CPU/memory/communication/learning/robustness reports. 58 test cases pass.
+- Headline: FW is not beaten by any learner on this benchmark (CB-warm is within 0.011, CB-cold 0.016-0.030 below); the per-hop oracle is +0.014 to +0.032 above FW; the time-split per-candidate oracle is not above FW; CB sees ~20-34 labels per node per run. Nothing is tuned. Waiting for the user's decision.
+- Not done: oracle lambda variants and the power-lifetime test from "phase 1" (the phase-1 text was not part of this session), a separate g beacon-load fix.
+
 ## How to check everything (end-of-session checklist)
 ```
 cd <ns-3>/ && cmake --build cmake-cache -j4
-./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 48 cases
+./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 58 cases
 python3 -I contrib/cb-ergr/scripts/check_params.py                        # rule 11
 python3 -I contrib/cb-ergr/scripts/run_sweep.py contrib/cb-ergr/sweeps/example-speed.yaml --dry-run
 ```

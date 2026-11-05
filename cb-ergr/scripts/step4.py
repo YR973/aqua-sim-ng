@@ -151,7 +151,7 @@ def learning(a):
                 for r in read_decisions(os.path.join(outs[(m, n, ns, s)], "decisions.csv")):
                     if r["learn"] != "1":
                         continue
-                    b = (int(float(r["time_s"]) // 200) * 200)
+                    b = int((float(r["time_s"]) - 300.0) // 200) * 200 + 300
                     b = max(300, b)
                     width[m][b][0] += float(r["width"])
                     width[m][b][1] += 1
