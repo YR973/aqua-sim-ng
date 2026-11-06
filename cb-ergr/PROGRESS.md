@@ -56,10 +56,14 @@
 - Done and committed (CHANGELOG 8 Nov 20:00): ChannelAwareBeacons, x10/x11, FW-NA, 11-dimensional CB, region/burst noise band, frozen literature scenarios (`configs/scn-*.txt`, CONFIRM E46-E48), `scripts/chan.py`, Step C and Step D results in `results/reference/chan/`, `doc/TODO.md`. 61 test cases pass.
 - Headline: CB does not beat FW-NA (or FW) in base, burst or shipping scenarios; FW-NA gains at most 0.013 PDR over FW in the literature burst; the shipping-lane literature value is +0.0013 dB (null). Open: the primary noise papers could not be read (E46), squall duration/extent are my choices.
 
+## State on 9 Nov 2026 (round 5)
+- Done and committed (CHANGELOG 2026-11-09): x11 removed (CB 10-dimensional, beacon 26 B), LabelRule=Evidence (default), TruthLabels diagnostic, ACK gates re-run, QELAR-G, power rules (FW-P, FW-LR, RR-P), receiver-lock counter, power-lifetime test. Results in `results/reference/r5/`; `scripts/r5.py`. 63 test cases pass.
+- Headlines: with true labels CB is still below FW (label quality is not the limit); no ACK gate saves ACKs without losing PDR or energy; QELAR-G is 0.01-0.035 below FW and near CB-warm; CB with power arms collapses (its energy price pushes it to the lowest level), only the oracle gains from power.
+
 ## How to check everything (end-of-session checklist)
 ```
 cd <ns-3>/ && cmake --build cmake-cache -j4
-./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 61 cases
+./build/utils/ns3.41-test-runner-debug --test-name=cb-ergr --verbose     # 63 cases
 python3 -I contrib/cb-ergr/scripts/check_params.py                        # rule 11
 python3 -I contrib/cb-ergr/scripts/run_sweep.py contrib/cb-ergr/sweeps/example-speed.yaml --dry-run
 ```
