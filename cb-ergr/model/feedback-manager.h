@@ -30,6 +30,7 @@
 #include "ns3/nstime.h"
 
 #include <functional>
+#include <string>
 #include <map>
 #include <vector>
 
@@ -56,6 +57,7 @@ struct PendingAttempt
     bool ackRequested = false;
     uint8_t attempt = 1;     ///< 1 for the first transmission of the packet at this node
     bool timedOut = false;   ///< the ACK timer fired: the retry already started, the record waits for late evidence
+    double receiptDueS = 0.0; ///< LabelRule=Evidence: by this time the forwarder's receipt bitmap for this attempt is due
     bool learn = true;       ///< false for member hand-offs: the label is logged but not given to the selector
     double predictedDistM = 0.0;
     EventId ackTimer;
@@ -74,6 +76,7 @@ class FeedbackManager
         double receiptKeepS = 0.0;       ///< how long a sender stays in outgoing receipt lists
         bool keepRecordAfterTimeout = true; ///< keep the learning record after an ACK timeout (late ACK / bitmap can still label it)
         bool censoredAsZero = false;     ///< a censored attempt becomes label 0 (old behaviour) instead of being dropped
+        bool heardIsZero = true;         ///< LabelRule=Evidence (b): hearing the forwarder after the receipt was due, without a receipt, is a 0
     };
 
     /// Callbacks into the routing layer (kept as functions so this class does not depend on it).
@@ -97,6 +100,9 @@ class FeedbackManager
 
     /// Spec §9.3: an ACK frame arrived from 'ackerId' for hopSeq.
     void OnAck(uint16_t ackerId, uint16_t hopSeq);
+
+    /// LabelRule: "Evidence", "Censor" or "TimeoutZero" -> the three switches of Config. Aborts on anything else.
+    static void ApplyLabelRule(const std::string& rule, Config& cfg);
 
     /// Spec §9.5: a beacon arrived; resolve pending attempts to that node from its receipt list.
     void OnBeaconReceipts(const ErgrBeaconHeader& beacon);
@@ -138,6 +144,8 @@ class FeedbackManager
     void Resolve(const HopKey& key, int y, LabelSource src);
     void OnAckTimeout(HopKey key);
     void OnExpiry(HopKey key);
+    /// LabelRule=Evidence: 'fwd' was heard now; label its due attempts from 'mine' (its receipt entry for us, or null).
+    void OnForwarderHeard(uint16_t fwd, const ReceiptEntry* mine);
     /// Spec §9.8: another attempt if the packet is still buffered and MaxTx is not reached.
     void RetryOrDrop(const E2EKey& pkt);
 

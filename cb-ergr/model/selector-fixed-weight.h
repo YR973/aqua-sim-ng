@@ -29,7 +29,14 @@ Decision SelectByWeights(const FeatureBuilder& features,
                          const PacketCtx& pkt,
                          const std::vector<Candidate>& eligible,
                          Time now,
-                         bool noiseAware = false);
+                         bool noiseAware = false,
+                         int powerRule = 0);
+
+/// Power rules shared by FW and RR (9 Nov 2026): 0 = full power; 1 = per candidate the lowest level whose predicted margin is >= 0
+/// (FW-P: the candidates are then compared at those levels); 2 = choose at full power, then send at the lowest level whose predicted
+/// margin to the chosen head is >= 0 ("lowest level that reaches the chosen head"). No feasible level -> full power.
+int LowestFeasibleLevel(const FeatureBuilder& features, const PacketCtx& pkt, const NeighbourEntry& nb, Time now);
+int PowerRuleFromName(const std::string& name);
 
 class SelectorFixedWeight : public ForwarderSelector
 {
@@ -49,6 +56,7 @@ class SelectorFixedWeight : public ForwarderSelector
     bool m_requestAck;
     bool m_marginFromRssi;
     bool m_noiseAware = false;
+    std::string m_powerRule = "Full";
 };
 
 /**

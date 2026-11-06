@@ -112,7 +112,7 @@ class LossBudget
     struct Why
     {
         std::string cause;
-        bool samePacket = false, sameSender = false, dataDecodable = false, dataStartsInside = false;
+        bool samePacket = false, sameSender = false, dataDecodable = false, dataStartsInside = false, lockedBefore = false;
     };
     Why WhyLostAt(const Attempt& a, uint32_t rx, bool evaluated, bool decodable, double arrS, double arrE) const;
     void Classify(Attempt& a);

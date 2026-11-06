@@ -59,7 +59,8 @@ struct ScenarioSettings
     double deadGuardS = params::deadhead::kGuardS;
     double deadReportRepeatS = params::deadhead::kReportRepeatS;
     bool leanBeacons = params::timers::kLeanBeacons;        // N-C
-    bool channelAwareBeacons = params::channelaware::kEnabled; // heads/sinks advertise their noise and addressed-frame loss rate (+2 B)
+    std::string labelRule = params::feedback::kLabelRule; // Evidence | Censor | TimeoutZero
+    bool channelAwareBeacons = params::channelaware::kEnabled; // heads/sinks advertise the ambient noise at their position (+1 B)
     double trickleMaxFactor = params::timers::kTrickleMaxFactor;
     bool headerFirstRx = params::timers::kHeaderFirstRx;    // N-A
     double electionPeriodS = params::timers::kElectionPeriodS;

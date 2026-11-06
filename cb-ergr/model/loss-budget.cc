@@ -225,6 +225,7 @@ LossBudget::WhyLostAt(const Attempt& a, uint32_t rx, bool evaluated, bool decoda
                 {
                     w.dataDecodable = w.dataDecodable || o.ok;
                     w.dataStartsInside = w.dataStartsInside || (o.s >= arrS);
+                    w.lockedBefore = w.lockedBefore || (o.ok && o.s < arrS); // a decodable frame that started first holds the receiver in RECV
                     if (o.attempt >= 0)
                     {
                         w.samePacket = w.samePacket || (m_attempts[o.attempt].key == a.key);
@@ -310,6 +311,10 @@ LossBudget::Classify(Attempt& a)
                 if (w.dataStartsInside)
                 {
                     m_hopCauses["  of which: an overlapping DATA frame started inside the victim's window"]++;
+                }
+                if (w.lockedBefore)
+                {
+                    m_hopCauses["  of which: receiver locked by an earlier decodable DATA frame"]++; // receiver-lock events (9 Nov 2026)
                 }
             }
         }

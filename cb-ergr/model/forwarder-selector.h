@@ -42,7 +42,7 @@ struct E2EKey
 };
 
 /// Largest feature vector supported (9 + optional onward feature, K§2.3).
-constexpr int kMaxFeatureDim = 11;
+constexpr int kMaxFeatureDim = 10;
 
 /// What the selector may know when it decides (never ground truth, K§0 rule 7).
 struct PacketCtx
@@ -95,7 +95,8 @@ enum class LabelSource
     Bitmap,
     Expiry,
     Void,  ///< the forwarder reported a void (NACK) before any other label arrived
-    Censored ///< no evidence either way by expiry: the learner gets nothing (or a 0 if CensoredLabels=Zero)
+    Censored, ///< no evidence either way by expiry: the learner gets nothing (LabelRule=TimeoutZero: a 0)
+    Heard     ///< LabelRule=Evidence (b): the forwarder was heard after its receipt was due and no receipt covers the attempt -> 0
 };
 
 /// Events that make a learner widen its uncertainty (spec §8.11, K§2.3: only deaths / unplanned loss).
@@ -168,6 +169,15 @@ class ForwarderSelector : public Object
 
     /// Numeric diagnostics for the cost/robustness report (counts add up over nodes; keys starting "max_" take the maximum).
     virtual void Diagnostics(std::map<std::string, double>& out) const {}
+
+    /// QELAR-G: a value to attach to the ACKs this node sends (its V); false = no field.
+    virtual bool AckValue(double& v) const { return false; }
+
+    /// QELAR-G: an ACK addressed to this node carried the acker's V.
+    virtual void OnAckValue(uint16_t ackerId, double v, Time now) {}
+
+    /// Diagnostic only (never a method): learn from the ground-truth hop outcome instead of the label (TruthLabels).
+    virtual bool WantsTruthLabels() const { return false; }
 
     /// False for round robin: ERGR-EMHC as published has no hop ACKs (spec §9.1 step 2).
     virtual bool UsesFeedback() const { return true; }

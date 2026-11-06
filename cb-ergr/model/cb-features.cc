@@ -109,7 +109,6 @@ FeatureBuilder::BuildFull(const PacketCtx& pkt, const NeighbourEntry& nb, int le
         x[i] = base[i];
     }
     x[kNoiseMargin] = NoiseCorrectedMarginFeature(pkt, nb, level, now);
-    x[kLossRate] = nb.hasChannel ? Clip01(nb.lossRate) : 0.0;
     return x;
 }
 

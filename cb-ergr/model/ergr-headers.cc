@@ -127,7 +127,7 @@ ErgrAckHeader::GetTypeId()
 uint32_t
 ErgrAckHeader::GetSerializedSize() const
 {
-    return 7; // type 1 + acker 2 + sender 2 + hopSeq 2
+    return hasV ? 9 : 7; // type 1 + acker 2 + sender 2 + hopSeq 2 (+ V 2)
 }
 
 void
@@ -135,8 +135,12 @@ ErgrAckHeader::Serialize(Buffer::Iterator i) const
 {
     i.WriteU8(static_cast<uint8_t>(FrameType::Ack));
     i.WriteHtonU16(ackerId);
-    i.WriteHtonU16(senderId);
+    i.WriteHtonU16(static_cast<uint16_t>((senderId & 0x7fff) | (hasV ? 0x8000 : 0)));
     i.WriteHtonU16(hopSeq);
+    if (hasV)
+    {
+        i.WriteHtonU16(static_cast<uint16_t>(vValue));
+    }
 }
 
 uint32_t
@@ -144,8 +148,14 @@ ErgrAckHeader::Deserialize(Buffer::Iterator i)
 {
     i.ReadU8();
     ackerId = i.ReadNtohU16();
-    senderId = i.ReadNtohU16();
+    const uint16_t senderAndFlag = i.ReadNtohU16();
+    senderId = senderAndFlag & 0x7fff;
+    hasV = (senderAndFlag & 0x8000) != 0;
     hopSeq = i.ReadNtohU16();
+    if (hasV)
+    {
+        vValue = static_cast<int16_t>(i.ReadNtohU16());
+    }
     return GetSerializedSize();
 }
 
@@ -218,7 +228,7 @@ ErgrBeaconHeader::Serialize(Buffer::Iterator i) const
     i.WriteU8(queueLen);
     i.WriteHtonU16(nextBeaconDs);
     i.WriteU8(static_cast<uint8_t>(receipts.size()));
-    i.WriteU8(static_cast<uint8_t>((hasBlob ? 1 : 0) | (hasQ ? 2 : 0) | (hasChannel ? 4 : 0) | ((hasBlob && blob.dim > 9) ? 8 : 0))); // flag byte: bit0 blob, bit1 Q value, bit2 channel fields, bit3 blob of 11 dimensions
+    i.WriteU8(static_cast<uint8_t>((hasBlob ? 1 : 0) | (hasQ ? 2 : 0) | (hasChannel ? 4 : 0) | ((hasBlob && blob.dim > 9) ? 8 : 0))); // flag byte: bit0 blob, bit1 Q value, bit2 channel field, bit3 blob of 10 dimensions
     for (const ReceiptEntry& r : receipts)
     {
         i.WriteHtonU16(r.senderId);
@@ -243,7 +253,6 @@ ErgrBeaconHeader::Serialize(Buffer::Iterator i) const
     if (hasChannel)
     {
         i.WriteU8(noiseQ);
-        i.WriteU8(lossQ);
     }
 }
 
@@ -271,7 +280,7 @@ ErgrBeaconHeader::Deserialize(Buffer::Iterator i)
     hasBlob = (flags & 1) != 0;
     hasQ = (flags & 2) != 0;
     hasChannel = (flags & 4) != 0;
-    blob.dim = (flags & 8) ? 11 : 9;
+    blob.dim = (flags & 8) ? 10 : 9;
     receipts.clear();
     for (uint8_t n = 0; n < nReceipts; ++n)
     {
@@ -299,7 +308,6 @@ ErgrBeaconHeader::Deserialize(Buffer::Iterator i)
     if (hasChannel)
     {
         noiseQ = i.ReadU8();
-        lossQ = i.ReadU8();
     }
     return GetSerializedSize();
 }
@@ -373,7 +381,7 @@ ErgrHandoverHeader::GetTypeId()
 uint32_t
 ErgrHandoverHeader::GetSerializedSize() const
 {
-    return 1 + 2 + 2 + 2 + 4u * dim + dim * (dim - 1u); // 115 for 9 dimensions, 161 for 11
+    return 1 + 2 + 2 + 2 + 4u * dim + dim * (dim - 1u); // 115 for 9 dimensions, 137 for 10
 }
 
 void
@@ -405,7 +413,7 @@ ErgrHandoverHeader::Deserialize(Buffer::Iterator i)
     toId = i.ReadNtohU16();
     const uint16_t cellAndDim = i.ReadNtohU16();
     cellId = cellAndDim & 0x7fff;
-    dim = (cellAndDim & 0x8000) ? 11 : 9;
+    dim = (cellAndDim & 0x8000) ? 10 : 9;
     for (int k = 0; k < dim; ++k)
     {
         theta[k] = static_cast<int16_t>(i.ReadNtohU16());

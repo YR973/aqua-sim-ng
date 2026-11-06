@@ -6,6 +6,7 @@
 
 #include "feedback-manager.h"
 
+#include "ns3/fatal-error.h"
 #include "ns3/simulator.h"
 
 #include <algorithm>
@@ -27,6 +28,33 @@ FeedbackManager::FeedbackManager(const Config& cfg,
 {
     // Report unresolved attempts at the end of the run for the consistency check.
     m_metrics->RegisterPendingProbe([this]() { return m_pending.size(); });
+}
+
+void
+FeedbackManager::ApplyLabelRule(const std::string& rule, Config& cfg)
+{
+    if (rule == "Evidence")
+    {
+        cfg.keepRecordAfterTimeout = true;
+        cfg.censoredAsZero = false;
+        cfg.heardIsZero = true;
+    }
+    else if (rule == "Censor")
+    {
+        cfg.keepRecordAfterTimeout = true;
+        cfg.censoredAsZero = false;
+        cfg.heardIsZero = false;
+    }
+    else if (rule == "TimeoutZero")
+    {
+        cfg.keepRecordAfterTimeout = false;
+        cfg.censoredAsZero = true;
+        cfg.heardIsZero = false;
+    }
+    else
+    {
+        NS_FATAL_ERROR("LabelRule must be Evidence, Censor or TimeoutZero, got " << rule);
+    }
 }
 
 // ============================================================ sender side ==
@@ -69,20 +97,26 @@ FeedbackManager::Resolve(const HopKey& key, int y, LabelSource src)
         src = LabelSource::Expiry;
     }
     double delayS = (Simulator::Now() - pa.sentAt).GetSeconds();
+    int learnY = y;
+    if (m_selector->WantsTruthLabels())
+    {
+        // Diagnostic only (TruthLabels): the learner is shown the ground-truth hop outcome of EVERY attempt, censored ones included.
+        learnY = m_metrics->HopWasReceived(m_cfg.myId, key.fwdId, key.hopSeq) ? 1 : 0;
+    }
     m_metrics->OnLabel(m_cfg.myId, key.fwdId, key.hopSeq, y, src, delayS, pa.attempt, pa.ackRequested, pa.learn,
                        pa.decision);
-    if (pa.learn && y >= 0)
+    if (pa.learn && learnY >= 0)
     {
         if (m_metrics->MeasureCpu())
         {
             const auto t0 = std::chrono::steady_clock::now();
-            m_selector->OnLabel(pa.decision, y, src, Simulator::Now());
+            m_selector->OnLabel(pa.decision, learnY, src, Simulator::Now());
             m_metrics->OnCpuSample(MetricsCollector::kCpuLabel,
                                    std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count());
         }
         else
         {
-            m_selector->OnLabel(pa.decision, y, src, Simulator::Now()); // a censored label is never shown to the learner
+            m_selector->OnLabel(pa.decision, learnY, src, Simulator::Now()); // a censored label is never shown to the learner
         }
     }
     if (y == 1)
@@ -104,6 +138,7 @@ FeedbackManager::OnAck(uint16_t ackerId, uint16_t hopSeq)
 {
     m_metrics->OnAckReceived(m_cfg.myId);
     Resolve(HopKey{ackerId, hopSeq}, 1, LabelSource::Ack);
+    OnForwarderHeard(ackerId, nullptr); // an ACK addressed to us: the forwarder is alive (LabelRule=Evidence (b))
 }
 
 void
@@ -173,30 +208,47 @@ FeedbackManager::OnBeaconReceipts(const ErgrBeaconHeader& beacon)
             break;
         }
     }
-    if (!mine)
-    {
-        return; // silence is not evidence
-    }
+    OnForwarderHeard(beacon.nodeId, mine);
+}
+
+void
+FeedbackManager::OnForwarderHeard(uint16_t fwd, const ReceiptEntry* mine)
+{
+    const double nowS = Simulator::Now().GetSeconds();
     std::vector<HopKey> keys;
     for (const auto& entry : m_pending)
     {
-        if (entry.first.fwdId == beacon.nodeId)
+        if (entry.first.fwdId == fwd)
         {
             keys.push_back(entry.first);
         }
     }
     for (const HopKey& key : keys)
     {
-        ReceiptStatus status = LookupReceipt(mine->highest, mine->mask, key.hopSeq);
+        auto it = m_pending.find(key);
+        if (it == m_pending.end())
+        {
+            continue;
+        }
+        const ReceiptStatus status = mine ? LookupReceipt(mine->highest, mine->mask, key.hopSeq) : ReceiptStatus::OutOfWindow;
+        const E2EKey pkt = it->second.pkt;
+        const bool retryStarted = it->second.timedOut; // the ACK timer already started the retry
         if (status == ReceiptStatus::Received)
         {
-            Resolve(key, 1, LabelSource::Bitmap);
+            Resolve(key, 1, LabelSource::Bitmap); // (a)
         }
         else if (status == ReceiptStatus::Missing)
         {
-            E2EKey pkt = m_pending[key].pkt;
-            const bool retryStarted = m_pending[key].timedOut; // the ACK timer already started the retry
-            Resolve(key, 0, LabelSource::Bitmap); // an explicit loss: the forwarder skipped this hopSeq
+            Resolve(key, 0, LabelSource::Bitmap); // (a) an explicit loss: the forwarder skipped this hopSeq
+            if (!retryStarted)
+            {
+                RetryOrDrop(pkt);
+            }
+        }
+        else if (m_cfg.heardIsZero && nowS >= it->second.receiptDueS)
+        {
+            // (b) the forwarder is alive and was heard after its receipt for this attempt was due, and no receipt covers it
+            Resolve(key, 0, LabelSource::Heard);
             if (!retryStarted)
             {
                 RetryOrDrop(pkt);

@@ -11,6 +11,7 @@
 
 #include "ns3/boolean.h"
 #include "ns3/abort.h"
+#include "ns3/fatal-error.h"
 #include "ns3/double.h"
 #include "ns3/string.h"
 
@@ -40,6 +41,9 @@ SelectorFixedWeight::GetTypeId()
             .AddAttribute("AckRequest", "Request an ACK on every attempt (same feedback as CB with AckMode=Every).",
                           BooleanValue(params::selector::kRequestAckOnFirstAttempt), MakeBooleanAccessor(&SelectorFixedWeight::m_requestAck),
                           MakeBooleanChecker())
+            .AddAttribute("PowerRule", "Full | LowestFeasible (FW-P: each candidate at its lowest level with predicted margin >= 0) | "
+                          "LowestReachChosen (choose at full power, send at the lowest level that reaches the chosen head).",
+                          StringValue("Full"), MakeStringAccessor(&SelectorFixedWeight::m_powerRule), MakeStringChecker())
             .AddAttribute("NoiseAware", "FW-NA: replace x8 by the noise-corrected margin x10 (same weight; needs ChannelAwareBeacons).",
                           BooleanValue(false), MakeBooleanAccessor(&SelectorFixedWeight::m_noiseAware), MakeBooleanChecker())
             .AddAttribute("MarginFromRssi", "Use the measured beacon SNR for the margin feature.",
@@ -74,7 +78,8 @@ SelectByWeights(const FeatureBuilder& features,
                 const PacketCtx& pkt,
                 const std::vector<Candidate>& eligible,
                 Time now,
-                bool noiseAware)
+                bool noiseAware,
+                int powerRule)
 {
     Decision best;
     if (eligible.empty())
@@ -85,10 +90,11 @@ SelectByWeights(const FeatureBuilder& features,
     double bestScore = -1e300;
     for (const Candidate& c : eligible)
     {
-        FeatureBuilder::Features x = features.Build(pkt, *c.nb, fullLevel, now);
+        const int level = (powerRule == 1) ? LowestFeasibleLevel(features, pkt, *c.nb, now) : fullLevel;
+        FeatureBuilder::Features x = features.Build(pkt, *c.nb, level, now);
         if (noiseAware)
         {
-            x[params::feature::kSnrMargin] = features.NoiseCorrectedMarginFeature(pkt, *c.nb, fullLevel, now); // FW-NA: x8 -> x10
+            x[params::feature::kSnrMargin] = features.NoiseCorrectedMarginFeature(pkt, *c.nb, level, now); // FW-NA: x8 -> x10
         }
         double logit = 0.0;
         for (int i = 0; i < FeatureBuilder::kDim; ++i)
@@ -102,6 +108,7 @@ SelectByWeights(const FeatureBuilder& features,
         {
             bestScore = score;
             best.fwdId = c.id;
+            best.powerLevel = static_cast<uint8_t>(level);
             best.pMean = pSuccess;
             best.score = score;
             for (int i = 0; i < FeatureBuilder::kDim; ++i)
@@ -110,7 +117,20 @@ SelectByWeights(const FeatureBuilder& features,
             }
         }
     }
-    best.powerLevel = static_cast<uint8_t>(fullLevel);
+    if (powerRule == 2)
+    {
+        for (const Candidate& c : eligible)
+        {
+            if (c.id == best.fwdId)
+            {
+                best.powerLevel = static_cast<uint8_t>(LowestFeasibleLevel(features, pkt, *c.nb, now));
+            }
+        }
+    }
+    else if (powerRule == 0)
+    {
+        best.powerLevel = static_cast<uint8_t>(fullLevel);
+    }
     best.ackRequest = requestAck;
     best.numCandidates = static_cast<uint8_t>(eligible.size());
     best.chosenRank = 1;
@@ -121,7 +141,39 @@ SelectByWeights(const FeatureBuilder& features,
 Decision
 SelectorFixedWeight::Select(const PacketCtx& pkt, const std::vector<Candidate>& eligible, Time now)
 {
-    return SelectByWeights(*m_features, m_w, m_kappaP, m_requestAck, pkt, eligible, now, m_noiseAware);
+    return SelectByWeights(*m_features, m_w, m_kappaP, m_requestAck, pkt, eligible, now, m_noiseAware, PowerRuleFromName(m_powerRule));
+}
+
+int
+LowestFeasibleLevel(const FeatureBuilder& features, const PacketCtx& pkt, const NeighbourEntry& nb, Time now)
+{
+    for (int level = 0; level < params::phy::kNumPowerLevels; ++level)
+    {
+        if (features.PredictedMarginDb(pkt, nb, level, now) >= 0.0)
+        {
+            return level;
+        }
+    }
+    return params::phy::kNumPowerLevels - 1;
+}
+
+int
+PowerRuleFromName(const std::string& name)
+{
+    if (name == "Full")
+    {
+        return 0;
+    }
+    if (name == "LowestFeasible")
+    {
+        return 1;
+    }
+    if (name == "LowestReachChosen")
+    {
+        return 2;
+    }
+    NS_FATAL_ERROR("PowerRule must be Full, LowestFeasible or LowestReachChosen, got " << name);
+    return 0;
 }
 
 // ---------------------------------------------------------------- A1 ------

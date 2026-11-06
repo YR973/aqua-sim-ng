@@ -53,7 +53,7 @@ enum class AckMode
 class SelectorCbV5 : public ForwarderSelector
 {
   public:
-    static constexpr int kDim = params::feature::kFullDim;   // 11: x1..x9 and the channel-aware x10, x11 (zero and unused unless ChannelFeatures)
+    static constexpr int kDim = params::feature::kFullDim;   // 10: x1..x9 and the channel-aware x10 (zero and unused unless ChannelFeatures)
     using Features = Vec<kDim>;
 
     static TypeId GetTypeId();
@@ -83,6 +83,7 @@ class SelectorCbV5 : public ForwarderSelector
     void OnSent(const Decision& d, Time now) override;
     void OnLabel(const Decision& d, int y, LabelSource src, Time now) override;
     void Diagnostics(std::map<std::string, double>& out) const override;
+    bool WantsTruthLabels() const override { return m_truthLabels; }
     void OnKnownChange(ChangeEvent e, Time now) override;
 
     // --- Sharing ---
@@ -143,8 +144,9 @@ class SelectorCbV5 : public ForwarderSelector
     std::map<uint16_t, StoredBlob> m_blobs;
     std::map<uint16_t, StoredBlob> m_neighbourBlobs;   ///< models heard from heads of neighbouring cells (NeighbourPrior)
     bool m_neighbourPrior;
-    bool m_channelFeatures = false;   ///< use x10, x11 (needs ChannelAwareBeacons); otherwise they are 0 and the model is 9-dimensional on the wire
-    int WireDim() const { return m_channelFeatures ? 11 : 9; }
+    bool m_truthLabels = false;       ///< DIAGNOSTIC ONLY (never a method): learn from the ground-truth hop outcome
+    bool m_channelFeatures = false;   ///< use x10 (needs ChannelAwareBeacons); otherwise it is 0 and the model is 9-dimensional on the wire
+    int WireDim() const { return m_channelFeatures ? 10 : 9; }
     PendingHandover m_pendingHandover;
     double m_betaHandover;
     Ptr<NormalRandomVariable> m_normal;

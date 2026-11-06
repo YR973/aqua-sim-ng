@@ -85,7 +85,10 @@ SelectorCbV5::GetTypeId()
             .AddAttribute("MarginFromRssi", "Use the measured SNR of the candidate's last beacon for the margin feature.",
                           BooleanValue(params::learner::kMarginFromRssi),
                           MakeBooleanAccessor(&SelectorCbV5::m_marginFromRssi), MakeBooleanChecker())
-            .AddAttribute("ChannelFeatures", "Use the channel-aware features x10 (noise-corrected margin) and x11 (advertised loss rate); needs ChannelAwareBeacons.",
+            .AddAttribute("TruthLabels", "DIAGNOSTIC ONLY, never a method: the learner is shown the ground-truth outcome of every attempt "
+                          "(censored ones included) instead of its label, to test whether label quality limits CB.",
+                          BooleanValue(false), MakeBooleanAccessor(&SelectorCbV5::m_truthLabels), MakeBooleanChecker())
+            .AddAttribute("ChannelFeatures", "Use the channel-aware feature x10 (noise-corrected margin); needs ChannelAwareBeacons.",
                           BooleanValue(false), MakeBooleanAccessor(&SelectorCbV5::m_channelFeatures), MakeBooleanChecker())
             .AddAttribute("AckGate", "Uncertainty used by the gated mode: Logit (spec width > TauW) or ProbStd (p(1-p) width > ProbStdThreshold).",
                           EnumValue(AckGate::Logit), MakeEnumAccessor<AckGate>(&SelectorCbV5::m_ackGate),
@@ -203,7 +206,7 @@ SelectorCbV5::SetServices(const SelectorServices& services)
         {
             w[i] = std::stod(item);
         }
-        NS_ABORT_MSG_IF(i != 9 && i != kDim, "PriorWeights needs 9 or 11 comma-separated numbers (missing ones are 0)");
+        NS_ABORT_MSG_IF(i != 9 && i != kDim, "PriorWeights needs 9 or 10 comma-separated numbers (missing ones are 0)");
         m_model.SetCellPrior(w);
         m_model.SetTheta(w);
     }
@@ -275,7 +278,7 @@ SelectorCbV5::PredictedMarginDb(const PacketCtx& pkt, const NeighbourEntry& nb, 
 SelectorCbV5::Features
 SelectorCbV5::BuildFeatures(const PacketCtx& pkt, const NeighbourEntry& nb, int level, Time now) const
 {
-    Features x; // x10 and x11 stay 0 unless ChannelFeatures
+    Features x; // x10 stays 0 unless ChannelFeatures
     if (m_channelFeatures)
     {
         const FeatureBuilder::FullFeatures full = m_features->BuildFull(pkt, nb, level, now);

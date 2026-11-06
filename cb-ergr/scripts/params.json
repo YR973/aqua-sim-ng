@@ -6,14 +6,16 @@
   "kNoiseBandStartS": 0.0,
   "kNoiseBandXMaxM": 1500.0,
   "kNoiseBandXMinM": 750.0,
+  "kNoiseBandYMaxM": 1000000000.0,
+  "kNoiseBandYMinM": -1000000000.0,
+  "kNoiseBandZMaxM": 1000000000.0,
+  "kNoiseBandZMinM": -1000000000.0,
   "kShadowSigmaDb": 5.0,
   "kShadowTauS": 120.0,
   "kShadowTickS": 5.0
  },
  "channelaware": {
   "kEnabled": false,
-  "kLossTauS": 300.0,
-  "kMaxGap": 8,
   "kNoiseRefDb": 20.0,
   "kNoiseSamplePeriodS": 5.0,
   "kNoiseStepDb": 0.5,
@@ -47,17 +49,15 @@
   "kDepthAdvantage": 2,
   "kDistance": 0,
   "kEntryAge": 4,
-  "kFullDim": 11,
+  "kFullDim": 10,
   "kHopProgress": 1,
   "kIntercept": 8,
-  "kLossRate": 10,
   "kNoiseMargin": 9,
   "kQueue": 5,
   "kSnrMargin": 7
  },
  "feedback": {
-  "kCensoredAsZero": false,
-  "kKeepRecordAfterTimeout": true
+  "kReceiptGuardS": 5.0
  },
  "grid": {
   "kBoxSizeM": 3000.0,
@@ -197,6 +197,14 @@
   "kLfaEpsilon": 0.1,
   "kLfaGamma": 0.8,
   "kLfaStep": 0.05,
+  "kQelarAlpha1": 0.5,
+  "kQelarAlpha2": 0.5,
+  "kQelarBeta1": 0.5,
+  "kQelarBeta2": 0.5,
+  "kQelarG": 1.0,
+  "kQelarGamma": 0.95,
+  "kQelarPriorFailure": 1.0,
+  "kQelarPriorSuccess": 1.0,
   "kQlAlpha": 0.3,
   "kQlEpsilon": 0.1,
   "kQlGamma": 0.8,

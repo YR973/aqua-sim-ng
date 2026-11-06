@@ -35,10 +35,9 @@ class FeatureBuilder
     /// Spec §8.1: x1..x9, all clipped to [0, 1]. 'level' is the power level (only x8 depends on it).
     Features Build(const PacketCtx& pkt, const NeighbourEntry& nb, int level, Time now) const;
 
-    /// x1..x11 (7 Nov 2026): the nine base features, then
-    ///   x10 = noise-corrected SNR margin: x8's margin minus (the candidate's advertised noise minus the noise embedded in x8), scaled like x8;
-    ///   x11 = the candidate's advertised loss rate of addressed DATA frames.
-    /// Without a channel-aware advertisement from the candidate x10 = x8 and x11 = 0.
+    /// x1..x10 (8 Nov 2026): the nine base features, then
+    ///   x10 = noise-corrected SNR margin: x8's margin minus (the candidate's advertised noise minus the noise embedded in x8), scaled like x8.
+    /// Without a channel-aware advertisement from the candidate x10 = x8. (x11, the advertised loss rate, was removed on 9 Nov 2026.)
     FullFeatures BuildFull(const PacketCtx& pkt, const NeighbourEntry& nb, int level, Time now) const;
 
     /// x10 alone, the scaled noise-corrected margin (FW-NA replaces x8 by it).

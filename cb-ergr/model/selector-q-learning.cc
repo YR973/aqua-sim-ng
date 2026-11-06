@@ -144,6 +144,24 @@ SelectorQLearning::OnLabel(const Decision& d, int y, LabelSource src, Time now)
     }
     const double previous = m_q.count(d.fwdId) ? m_q[d.fwdId] : d.score; // start from the value used at decision time
     m_q[d.fwdId] = previous + m_alpha * (target - previous);
+    m_labels++;
+}
+
+void
+SelectorQLearning::Diagnostics(std::map<std::string, double>& out) const
+{
+    if (m_labels == 0)
+    {
+        return;
+    }
+    out["theta_sum_0"] += m_valueSelf; // theta_trace.csv column theta1 = V of the head
+    double sum = 0.0;
+    for (const auto& e : m_q)
+    {
+        sum += e.second;
+    }
+    out["theta_sum_1"] += m_q.empty() ? 0.0 : sum / m_q.size(); // theta2 = mean learned Q
+    out["theta_heads"] += 1.0;
 }
 
 void

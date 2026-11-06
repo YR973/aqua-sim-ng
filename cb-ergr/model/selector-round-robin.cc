@@ -5,6 +5,7 @@
 #include "selector-round-robin.h"
 
 #include "cb-ergr-params.h"
+#include "selector-fixed-weight.h"
 
 #include "ns3/boolean.h"
 
@@ -26,6 +27,8 @@ SelectorRoundRobin::GetTypeId()
                                           BooleanValue(params::selector::kRoundRobinWithFeedback),
                                           MakeBooleanAccessor(&SelectorRoundRobin::m_withFeedback),
                                           MakeBooleanChecker())
+                            .AddAttribute("LowestReach", "RR-P: send at the lowest power level whose predicted margin to the chosen head is >= 0.",
+                                          BooleanValue(false), MakeBooleanAccessor(&SelectorRoundRobin::m_lowestReach), MakeBooleanChecker())
                             .AddAttribute("AckRequest",
                                           "With feedback: request an ACK on first attempts (false: labels come from receipt bitmaps).",
                                           BooleanValue(params::selector::kRequestAckOnFirstAttempt),
@@ -67,13 +70,17 @@ SelectorRoundRobin::Select(const PacketCtx& pkt, const std::vector<Candidate>& e
     if (m_features)
     {
         // For the decision log (and for fitting A1 offline); the choice above did not use these numbers.
-        FeatureBuilder::FullFeatures x = m_features->BuildFull(pkt, *chosen->nb, params::phy::kNumPowerLevels - 1, now); // x10, x11 too (8 Nov 2026)
+        FeatureBuilder::FullFeatures x = m_features->BuildFull(pkt, *chosen->nb, params::phy::kNumPowerLevels - 1, now); // x10 too (8 Nov 2026)
         for (int i = 0; i < FeatureBuilder::kFullDim; ++i)
         {
             d.x[i] = x[i];
         }
     }
     d.powerLevel = params::phy::kNumPowerLevels - 1; // full power
+    if (m_lowestReach && m_features)
+    {
+        d.powerLevel = static_cast<uint8_t>(LowestFeasibleLevel(*m_features, pkt, *chosen->nb, now));
+    }
     d.ackRequest = m_withFeedback && m_requestAck;   // no hop ACKs in the published protocol
     d.valid = true;
     return d;

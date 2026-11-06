@@ -219,6 +219,7 @@ class MetricsCollector : public Object
     uint64_t TotalAttempts() const { return m_totalAttempts; }
     uint64_t TotalLabels() const { return m_totalLabels; }
     uint64_t TotalFalseNegatives() const { return m_falseNegatives; }
+    uint64_t TotalFalsePositives() const { return m_falsePositives; }
     uint64_t CensoredLabels() const { return m_censored; }
     uint64_t CensoredButReceived() const { return m_censoredReceived; }
     uint64_t TimeoutsFired() const { return m_timeoutsFired; }
@@ -245,7 +246,7 @@ class MetricsCollector : public Object
         uint64_t attempts = 0, firstAttempts = 0, retransmissions = 0;
         uint64_t hopSuccessFirst = 0, hopSuccessRetry = 0;   ///< ground truth, by attempt number
         uint64_t arRequested = 0, acksSent = 0, acksReceived = 0, ackTimeouts = 0, duplicateLabels = 0;
-        std::array<uint64_t, 6> labelsBySource{};            ///< Ack, AckTimeout, Bitmap, Expiry, Void, Censored
+        std::array<uint64_t, 7> labelsBySource{};            ///< Ack, AckTimeout, Bitmap, Expiry, Void, Censored, Heard
         std::array<uint64_t, 2> labelsByValue{};
         double labelDelaySumS = 0.0;
         double headTimeS = 0.0;
@@ -285,7 +286,7 @@ class MetricsCollector : public Object
     struct LinkStats
     {
         uint64_t attempts = 0, retx = 0, truthSuccess = 0;
-        std::array<uint64_t, 6> labelsBySource{};   ///< label 1 / 0 split is in the two arrays below
+        std::array<uint64_t, 7> labelsBySource{};   ///< label 1 / 0 split is in the two arrays below
         uint64_t labelOnes = 0, labelZeros = 0;
         double distSumM = 0.0, predSum = 0.0;
         double firstS = -1.0, lastS = 0.0;
@@ -325,7 +326,8 @@ class MetricsCollector : public Object
     std::map<std::pair<uint32_t, uint32_t>, SnrStats> m_linkSnr;   ///< DATA frames only
     std::ofstream m_decisionsFile;
     uint64_t m_totalAttempts = 0, m_totalLabels = 0, m_falseNegatives = 0, m_labelZeros = 0;
-    std::array<uint64_t, 6> m_labelsBySource{};
+    std::array<uint64_t, 7> m_labelsBySource{};
+    uint64_t m_falsePositives = 0, m_labelOnes = 0;
     uint64_t m_peakPending = 0;
     std::array<std::vector<float>, 3> m_cpuNs;
     uint64_t m_bcnBase = 0, m_bcnReceipts = 0, m_bcnBlob = 0, m_bcnQ = 0, m_bcnCount = 0;

@@ -42,12 +42,14 @@ class SelectorQLearning : public ForwarderSelector
 
     // --- Sharing (the advertised value rides on the beacon) ---
     void OnBeaconTx(ErgrBeaconHeader& beacon, Time now) override;
+    void Diagnostics(std::map<std::string, double>& out) const override;
 
     double Q(uint16_t id) const;
 
   private:
     double m_alpha, m_gamma, m_epsilon, m_stepCost, m_hminBonus;
     bool m_legacy = false;
+    uint64_t m_labels = 0;
     std::map<uint16_t, double> m_q;
     double m_valueSelf = 0.0;       ///< best Q seen at the last decision: what this node advertises
     Ptr<UniformRandomVariable> m_uniform;

@@ -16,6 +16,7 @@ build_lib(
         model/cb-features.cc
         model/selector-fixed-weight.cc
         model/selector-carp-ewma.cc
+        model/selector-qelar.cc
         model/selector-q-learning.cc
         model/selector-lfa-q.cc
         model/oracle-evaluator.cc
@@ -52,6 +53,7 @@ build_lib(
         model/cb-features.h
         model/selector-fixed-weight.h
         model/selector-carp-ewma.h
+        model/selector-qelar.h
         model/selector-q-learning.h
         model/selector-lfa-q.h
         model/oracle-evaluator.h

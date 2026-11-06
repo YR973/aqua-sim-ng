@@ -167,8 +167,12 @@ constexpr int kQueueLimit = 64;           // [CONFIRM] frames waiting in the MAC
 // (we do not know whether the frame arrived), not labelled 0. Censored labels are dropped by default.
 namespace feedback
 {
-constexpr bool kKeepRecordAfterTimeout = true; // [DECIDED 7 Nov 2026] false = the old behaviour (label 0 at the ACK timeout, record erased)
-constexpr bool kCensoredAsZero = false;        // [DECIDED 7 Nov 2026] false = a censored label is dropped; true = counted as 0 (old behaviour)
+// 9 Nov 2026: LabelRule = Evidence (default) | Censor (the 7 Nov rule) | TimeoutZero (the original rule: 0 at the ACK timeout).
+// Evidence: after the ACK timeout the attempt is labelled (a) by a later receipt bitmap of the forwarder that covers the hopSeq (1 / 0);
+// (b) else 0 once the forwarder is heard (its beacon, or an ACK addressed to us) after the receipt for this attempt was due; (c) else
+// censored at expiry. A late ACK labels 1 whenever it comes while the record is open.
+constexpr const char* kLabelRule = "Evidence";  // [DECIDED 9 Nov 2026]
+constexpr double kReceiptGuardS = 5.0;          // [CONFIRM] the receipt is "due" at the forwarder's next beacon after the attempt + this guard
 } // namespace feedback
 
 // ----------------------------------------------------- head solicitation ----
@@ -249,6 +253,17 @@ constexpr double kQlEpsilon = 0.1;
 constexpr double kQlStepCost = 0.1;        // reward = success - cost
 constexpr double kQlHminBonus = 0.1;       // initial Q = 1 + bonus * (myHmin - hmin_j)
 constexpr double kQlValueScale = 0.001;    // advertised value is sent as int16 in units of this
+// QELAR-G (9 Nov 2026): Hu & Fei, IEEE TMC 9(6) 796-809, 2010. Reward of a successful hop -g - a1 (c_i + c_j) + a2 (d_i + d_j), of a failed one
+// -g - b1 c_i + b2 d_i, c = 1 - E_res/E_init, d = (2/pi) atan(E_res - mean E_res of the group). The paper's numeric defaults could NOT be
+// retrieved (CONFIRM E50): the values below are my choices.
+constexpr double kQelarG = 1.0;            // [CONFIRM] constant transmission cost
+constexpr double kQelarAlpha1 = 0.5;       // [CONFIRM]
+constexpr double kQelarAlpha2 = 0.5;       // [CONFIRM]
+constexpr double kQelarBeta1 = 0.5;        // [CONFIRM]
+constexpr double kQelarBeta2 = 0.5;        // [CONFIRM]
+constexpr double kQelarGamma = 0.95;       // [CONFIRM] discount
+constexpr double kQelarPriorSuccess = 1.0; // [CONFIRM] Beta prior of the per-neighbour success probability P (model-based Q, as in QELAR)
+constexpr double kQelarPriorFailure = 1.0; // [CONFIRM]
 // CARP-style EWMA of hop success, S§11 B3
 constexpr double kCarpBeta = 0.2;
 constexpr double kCarpInitial = 0.5;
@@ -314,13 +329,12 @@ constexpr int kSnrMargin = 7;    // x8
 constexpr int kIntercept = 8;    // x9
 constexpr int kBaseDim = 9;      // D without the optional onward feature
 constexpr int kNoiseMargin = 9;  // x10 (7 Nov 2026): x8's margin corrected by the candidate's advertised noise (ChannelAwareBeacons)
-constexpr int kLossRate = 10;    // x11: the candidate's advertised loss rate of addressed DATA frames
-constexpr int kFullDim = 11;     // D with x10 and x11
+constexpr int kFullDim = 10;     // D with x10 (x11, the advertised loss rate, was removed on 9 Nov 2026: CHANGELOG)
 } // namespace feature
 
 // ------------------------------------------------- channel-aware beacons ----
-// 7 Nov 2026 (user request, Step A): heads (and sinks) advertise the ambient noise they measure at their own position and the loss rate of
-// the DATA frames addressed to them, 1 byte each. Off by default.
+// 8 Nov 2026 (user request, Step A): heads (and sinks) advertise the ambient noise they measure at their own position (1 byte).
+// The second byte (loss rate of addressed DATA frames, feature x11) was removed on 9 Nov 2026. Off by default.
 namespace channelaware
 {
 constexpr bool kEnabled = false;          // [DECIDED 7 Nov 2026] ChannelAwareBeacons
@@ -328,8 +342,6 @@ constexpr double kNoiseTauS = 30.0;       // [DECIDED 7 Nov 2026] EWMA time cons
 constexpr double kNoiseSamplePeriodS = 5.0; // [CONFIRM] how often a node samples its noise (a modem measures between frames)
 constexpr double kNoiseRefDb = 20.0;      // [DESIGN] byte 0 = this level (dB, band noise level); 0.5 dB steps => covers 20..147.5 dB
 constexpr double kNoiseStepDb = 0.5;      // [DECIDED 7 Nov 2026]
-constexpr double kLossTauS = 300.0;       // [CONFIRM] time constant of the pooled addressed-frame loss rate (a head receives a frame every few seconds at best)
-constexpr int kMaxGap = 8;                // [CONFIRM] a hopSeq jump larger than this is a resynchronisation, not 'k frames lost'
 } // namespace channelaware
 
 // ------------------------------------------------------------- logging ----

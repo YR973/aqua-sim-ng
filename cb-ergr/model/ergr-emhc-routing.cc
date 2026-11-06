@@ -126,19 +126,14 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("RetriesAlwaysAck", "Retries always request an ACK (spec §9.12).",
                           BooleanValue(params::timers::kRetriesAlwaysAck),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_retriesAlwaysAck), MakeBooleanChecker())
-            .AddAttribute("ChannelAwareBeacons", "Heads and sinks advertise their ambient noise and the loss rate of DATA frames addressed to them (+2 B).",
+            .AddAttribute("ChannelAwareBeacons", "Heads and sinks advertise the ambient noise at their position (+1 B).",
                           BooleanValue(params::channelaware::kEnabled),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_channelAware), MakeBooleanChecker())
             .AddAttribute("NoiseTauS", "Time constant of the ambient-noise EWMA (s).", DoubleValue(params::channelaware::kNoiseTauS),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_noiseTauS), MakeDoubleChecker<double>(0.1))
-            .AddAttribute("LossTauS", "Time constant of the pooled addressed-frame loss rate (s).", DoubleValue(params::channelaware::kLossTauS),
-                          MakeDoubleAccessor(&ErgrEmhcRouting::m_lossTauS), MakeDoubleChecker<double>(0.1))
-            .AddAttribute("KeepRecordAfterTimeout", "Keep the learning record after an ACK timeout so a late ACK or bitmap can label it (false = old rule).",
-                          BooleanValue(params::feedback::kKeepRecordAfterTimeout),
-                          MakeBooleanAccessor(&ErgrEmhcRouting::m_keepRecord), MakeBooleanChecker())
-            .AddAttribute("CensoredLabels", "Attempts with no evidence by expiry: Drop (not shown to the learner) or Zero (counted as 0, old rule).",
-                          StringValue(params::feedback::kCensoredAsZero ? "Zero" : "Drop"),
-                          MakeStringAccessor(&ErgrEmhcRouting::m_censoredPolicy), MakeStringChecker())
+            .AddAttribute("LabelRule", "How an attempt without an ACK is labelled: Evidence (bitmap, else 0 once the forwarder is heard after its "
+                          "receipt was due, else censored), Censor (bitmap, else censored) or TimeoutZero (0 at the ACK timeout).",
+                          StringValue(params::feedback::kLabelRule), MakeStringAccessor(&ErgrEmhcRouting::m_labelRule), MakeStringChecker())
             .AddAttribute("ExpiryBeacons", "Label expiry (MExpiry) in beacon periods.",
                           DoubleValue(params::timers::kExpiryBeacons),
                           MakeDoubleAccessor(&ErgrEmhcRouting::m_expiryBeacons), MakeDoubleChecker<double>(1.0))
@@ -379,8 +374,7 @@ ErgrEmhcRouting::Start()
         fc.maxTx = m_maxTx;
         fc.expiryS = m_expiryBeacons * m_beaconPeriodS;
         fc.receiptKeepS = m_receiptKeepBeacons * m_beaconPeriodS;
-        fc.keepRecordAfterTimeout = m_keepRecord;
-        fc.censoredAsZero = (m_censoredPolicy == "Zero");
+        FeedbackManager::ApplyLabelRule(m_labelRule, fc);
         FeedbackManager::Hooks hooks;
         hooks.retry = [this](const HeldPacket& held) {
             if (!IsAlive())
@@ -683,10 +677,6 @@ ErgrEmhcRouting::SendBeacon()
         hdr.hasChannel = true;
         hdr.noiseQ = static_cast<uint8_t>(std::max(0.0, std::min(255.0, std::round((m_noiseEwmaDb - params::channelaware::kNoiseRefDb) /
                                                                                    params::channelaware::kNoiseStepDb))));
-        // decay the counts to now before reading the rate
-        const double keep = std::exp(-(Simulator::Now().GetSeconds() - m_lossUpdateS) / m_lossTauS);
-        const double total = (m_lossRcv + m_lossLost) * keep;
-        hdr.lossQ = static_cast<uint8_t>(std::round(255.0 * (total >= 1.0 ? std::min(1.0, m_lossLost * keep / total) : 0.0)));
     }
     m_selector->OnBeaconTx(hdr, Simulator::Now()); // may attach a model blob (spec §8.10)
     m_metrics->OnBeaconParts(hdr.BaseBytes(), hdr.ReceiptBytes(), hdr.BlobBytes(), hdr.QBytes());
@@ -766,7 +756,6 @@ ErgrEmhcRouting::OnBeacon(const ErgrBeaconHeader& hdr)
     {
         entry.hasChannel = true;
         entry.noiseDb = params::channelaware::kNoiseRefDb + hdr.noiseQ * params::channelaware::kNoiseStepDb;
-        entry.lossRate = hdr.lossQ / 255.0;
     }
     double snrDb = 0.0;
     if (m_snrMeter && m_snrMeter(hdr.nodeId, m_id, snrDb))
@@ -1319,6 +1308,26 @@ ErgrEmhcRouting::HandOffToHead(HeldPacket pkt)
     SendData(pkt, head->id, params::phy::kNumPowerLevels - 1, m_feedback != nullptr, nullptr);
 }
 
+// LabelRule=Evidence: the receipt for an attempt sent now is due with the forwarder's first beacon after now (from its last beacon and
+// the interval it advertised), plus a guard for the airtime, the propagation and the CSMA backoff.
+double
+ErgrEmhcRouting::ReceiptDueS(uint16_t fwdId) const
+{
+    const double nowS = Simulator::Now().GetSeconds();
+    double intervalS = m_beaconPeriodS;
+    double nextS = nowS + intervalS;
+    if (const NeighbourEntry* nb = m_table.Find(fwdId))
+    {
+        intervalS = nb->nextBeaconIn.GetSeconds() > 0.0 ? nb->nextBeaconIn.GetSeconds() : m_beaconPeriodS;
+        nextS = nb->beaconTime.GetSeconds() + intervalS;
+        while (nextS <= nowS)
+        {
+            nextS += intervalS;
+        }
+    }
+    return nextS + params::feedback::kReceiptGuardS;
+}
+
 // Random start (spec §7): the first hopSeq towards a forwarder is random, then it counts up.
 uint16_t
 ErgrEmhcRouting::NextHopSeq(uint16_t fwdId)
@@ -1410,6 +1419,7 @@ ErgrEmhcRouting::SendData(HeldPacket pkt,
         pa.attempt = pkt.attempt;
         pa.learn = (decision != nullptr);
         pa.predictedDistM = predictedDistM;
+        pa.receiptDueS = ReceiptDueS(forwarderId);
         m_feedback->Track(pa, pkt, ar ? AckTimeoutS(forwarderId, dataBytes) : 0.0);
     }
     Remember(pkt);
@@ -1422,6 +1432,12 @@ ErgrEmhcRouting::SendAck(uint16_t toSender, uint16_t hopSeq)
     ack.ackerId = m_id;
     ack.senderId = toSender;
     ack.hopSeq = hopSeq;
+    double v = 0.0;
+    if (m_selector->AckValue(v))
+    {
+        ack.hasV = true;
+        ack.vValue = static_cast<int16_t>(std::round(std::max(-30.0, std::min(30.0, v)) / params::selector::kQlValueScale));
+    }
     Ptr<Packet> packet = Create<Packet>(0);
     packet->AddHeader(ack);
     m_metrics->OnAckSent(m_id);
@@ -1499,49 +1515,9 @@ ErgrEmhcRouting::NoiseTick()
     Simulator::Schedule(Seconds(params::channelaware::kNoiseSamplePeriodS), &ErgrEmhcRouting::NoiseTick, this);
 }
 
-// Frames addressed to this node only: a gap in the hopSeq of one upstream sender is a frame that never arrived.
-void
-ErgrEmhcRouting::NoteAddressedData(uint16_t sender, uint16_t hopSeq)
-{
-    const double nowS = Simulator::Now().GetSeconds();
-    const double keep = std::exp(-(nowS - m_lossUpdateS) / m_lossTauS);
-    m_lossRcv *= keep;
-    m_lossLost *= keep;
-    m_lossUpdateS = nowS;
-    auto it = m_lastHopSeqFrom.find(sender);
-    if (it == m_lastHopSeqFrom.end())
-    {
-        m_lastHopSeqFrom[sender] = hopSeq;
-        m_lossRcv += 1.0;
-        return;
-    }
-    const uint16_t diff = static_cast<uint16_t>(hopSeq - it->second);
-    if (diff == 0 || diff >= 0x8000)
-    {
-        return; // a repeat or an old, reordered frame
-    }
-    it->second = hopSeq;
-    m_lossRcv += 1.0;
-    if (diff <= params::channelaware::kMaxGap)
-    {
-        m_lossLost += diff - 1;   // the frames between were addressed to me and did not arrive
-    }
-}
-
-double
-ErgrEmhcRouting::AddressedLossRate() const
-{
-    const double total = m_lossRcv + m_lossLost;
-    return total >= 1.0 ? m_lossLost / total : 0.0;
-}
-
 void
 ErgrEmhcRouting::OnData(const ErgrDataHeader& hdr)
 {
-    if (m_channelAware)
-    {
-        NoteAddressedData(hdr.senderId, hdr.hopSeq);
-    }
     E2EKey key{hdr.sourceId, hdr.sourceSeq};
     m_metrics->OnHopReceived(hdr.senderId, m_id, hdr.hopSeq);
     m_metrics->OnDataDelivered(E2EKey{hdr.sourceId, hdr.sourceSeq}, hdr.senderId, m_id); // ground truth, logging only
@@ -1990,6 +1966,10 @@ ErgrEmhcRouting::Recv(Ptr<Packet> packet, const Address& dest, uint16_t protocol
         packet->RemoveHeader(hdr);
         bool mine = hdr.senderId == m_id;
         m_metrics->OnFrameRx(m_id, FrameType::Ack, bytes, mine, hdr.ackerId);
+        if (mine && hdr.hasV)
+        {
+            m_selector->OnAckValue(hdr.ackerId, hdr.vValue * params::selector::kQlValueScale, Simulator::Now());
+        }
         if (mine && m_feedback)
         {
             m_feedback->OnAck(hdr.ackerId, hdr.hopSeq);

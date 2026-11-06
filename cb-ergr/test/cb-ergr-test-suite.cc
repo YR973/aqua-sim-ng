@@ -21,6 +21,7 @@
 #include "ns3/selector-lfa-q.h"
 #include "ns3/selector-oracle.h"
 #include "ns3/selector-q-learning.h"
+#include "ns3/selector-qelar.h"
 #include "ns3/selector-round-robin.h"
 #include "ns3/aqua-sim-phy-cmn.h"
 #include "ns3/boolean.h"
@@ -1383,7 +1384,7 @@ class LostAckGivesTimeoutLabelAndDeduplicatedRetry : public TestCase
 
     void RunOnce(bool keepRecord)
     {
-        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::KeepRecordAfterTimeout", BooleanValue(keepRecord));
+        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::LabelRule", StringValue(keepRecord ? "Evidence" : "TimeoutZero"));
         std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-lostack";
         RngSeedManager::SetSeed(6);
         LineNetwork net(dir, "WithFeedback=true;AckRequest=true", 0.0);
@@ -1440,7 +1441,7 @@ class LostAckGivesTimeoutLabelAndDeduplicatedRetry : public TestCase
         {
             std::filesystem::remove_all(dir);
         }
-        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::KeepRecordAfterTimeout", BooleanValue(params::feedback::kKeepRecordAfterTimeout));
+        Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::LabelRule", StringValue(params::feedback::kLabelRule));
     }
 };
 
@@ -1460,6 +1461,8 @@ class RecordingSelector : public ForwarderSelector
     }
     Decision Select(const PacketCtx&, const std::vector<Candidate>&, Time) override { return Decision(); }
     void OnLabel(const Decision& d, int y, LabelSource src, Time) override { labels.push_back({d.fwdId, y, src}); }
+    bool WantsTruthLabels() const override { return truth; }
+    bool truth = false;
     struct Seen
     {
         uint16_t fwd;
@@ -1491,6 +1494,7 @@ struct FeedbackHarness
         fc.receiptKeepS = 150.0;
         fc.keepRecordAfterTimeout = keep;
         fc.censoredAsZero = censoredAsZero;
+        fc.heardIsZero = false;   // the 7 Nov tests below are about the Censor / TimeoutZero rules
         FeedbackManager::Hooks hooks;
         hooks.retry = [this](const HeldPacket&) { retries++; };
         hooks.drop = [this](const HeldPacket&, DropReason) { drops++; };
@@ -1498,7 +1502,7 @@ struct FeedbackHarness
         fm = std::make_unique<FeedbackManager>(fc, selector, metrics, hooks);
     }
 
-    void Track(uint16_t fwd, uint16_t hopSeq, uint16_t seq, bool ar)
+    void Track(uint16_t fwd, uint16_t hopSeq, uint16_t seq, bool ar, double receiptDueS = 1e9)
     {
         PendingAttempt pa;
         pa.decision.fwdId = fwd;
@@ -1506,6 +1510,7 @@ struct FeedbackHarness
         pa.hop = HopKey{fwd, hopSeq};
         pa.pkt = E2EKey{1, seq};
         pa.ackRequested = ar;
+        pa.receiptDueS = receiptDueS;
         HeldPacket held;
         held.key = pa.pkt;
         held.attempt = 1;
@@ -1808,6 +1813,112 @@ class NoiseBurstAndCounterfactualLogAreConsistent : public TestCase
         if (!std::getenv("CBERGR_KEEP"))
         {
             std::filesystem::remove_all(dir);
+        }
+    }
+};
+
+// R5 Step 1: LabelRule=Evidence (b), and the TruthLabels diagnostic.
+class EvidenceRuleLabelsZeroWhenTheForwarderIsHeardLate : public TestCase
+{
+  public:
+    EvidenceRuleLabelsZeroWhenTheForwarderIsHeardLate()
+        : TestCase("R5-1: Evidence rule: bitmap first, else 0 once the forwarder is heard after the receipt was due, else censored; TruthLabels plumbing")
+    {
+    }
+
+  private:
+    static ErgrBeaconHeader BeaconFrom(uint16_t node, bool listMe, uint16_t highest, uint32_t mask)
+    {
+        ErgrBeaconHeader b;
+        b.nodeId = node;
+        if (listMe)
+        {
+            b.receipts.push_back({1, highest, mask});
+        }
+        return b;
+    }
+
+    void DoRun() override
+    {
+        {   // (b): a beacon of the forwarder without a receipt for us, heard after the receipt was due -> 0 (source Heard); before -> nothing
+            FeedbackHarness h(true, false);
+            FeedbackManager::Config fc;
+            fc.myId = 1; fc.beaconPeriodS = 50; fc.maxTx = 3; fc.expiryS = 100; fc.receiptKeepS = 150;
+            FeedbackManager::ApplyLabelRule("Evidence", fc);
+            FeedbackManager::Hooks hooks;
+            int retries = 0;
+            hooks.retry = [&retries](const HeldPacket&) { retries++; };
+            hooks.drop = [](const HeldPacket&, DropReason) {};
+            FeedbackManager fm(fc, h.selector, h.metrics, hooks);
+            PendingAttempt pa;
+            pa.decision.fwdId = 5;
+            pa.decision.valid = true;
+            pa.hop = HopKey{5, 1};
+            pa.pkt = E2EKey{1, 1};
+            pa.ackRequested = true;
+            pa.receiptDueS = 30.0;
+            HeldPacket held;
+            held.key = pa.pkt;
+            held.attempt = 1;
+            fm.Track(pa, held, 10.0);
+            Simulator::Schedule(Seconds(20), [&fm]() { fm.OnBeaconReceipts(BeaconFrom(5, false, 0, 0)); }); // too early: no label
+            Simulator::Schedule(Seconds(25), [this, &h]() { NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 0u, "heard before the receipt was due: no label"); });
+            Simulator::Schedule(Seconds(40), [&fm]() { fm.OnBeaconReceipts(BeaconFrom(5, false, 0, 0)); }); // after: 0
+            Simulator::Stop(Seconds(60));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 1u, "one label");
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels[0].y, 0, "0: the forwarder is alive and did not list the attempt");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(h.selector->labels[0].src), static_cast<int>(LabelSource::Heard), "source Heard");
+            NS_TEST_ASSERT_MSG_EQ(retries, 1, "only the retry of the ACK timeout");
+            Simulator::Destroy();
+        }
+        {   // (a) a covering bitmap wins over (b); an ACK addressed to us is also "heard"
+            FeedbackHarness h(true, false);
+            FeedbackManager::Config fc;
+            fc.myId = 1; fc.beaconPeriodS = 50; fc.maxTx = 3; fc.expiryS = 100; fc.receiptKeepS = 150;
+            FeedbackManager::ApplyLabelRule("Evidence", fc);
+            FeedbackManager::Hooks hooks;
+            hooks.retry = [](const HeldPacket&) {};
+            hooks.drop = [](const HeldPacket&, DropReason) {};
+            FeedbackManager fm(fc, h.selector, h.metrics, hooks);
+            for (uint16_t hs : {1, 2})
+            {
+                PendingAttempt pa;
+                pa.decision.fwdId = 5;
+                pa.decision.valid = true;
+                pa.hop = HopKey{5, hs};
+                pa.pkt = E2EKey{1, hs};
+                pa.ackRequested = true;
+                pa.receiptDueS = 30.0;
+                HeldPacket held;
+                held.key = pa.pkt;
+                held.attempt = 1;
+                fm.Track(pa, held, 10.0);
+            }
+            Simulator::Schedule(Seconds(40), [&fm]() { fm.OnBeaconReceipts(BeaconFrom(5, true, 2, 0x1u)); }); // hopSeq 2 received, 1 inside the window and missing
+            Simulator::Stop(Seconds(60));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 2u, "two labels");
+            int ones = 0, bitmap = 0;
+            for (const auto& l : h.selector->labels)
+            {
+                ones += l.y;
+                bitmap += l.src == LabelSource::Bitmap ? 1 : 0;
+            }
+            NS_TEST_ASSERT_MSG_EQ(ones, 1, "one 1 (covered, bit set) and one 0 (covered, bit clear)");
+            NS_TEST_ASSERT_MSG_EQ(bitmap, 2, "both from the bitmap (a), not from (b)");
+            Simulator::Destroy();
+        }
+        {   // TruthLabels: the learner sees the ground truth (here: the metrics never saw the hop arrive) instead of the ACK's 1
+            FeedbackHarness h(true, false);
+            h.selector->truth = true;
+            h.Track(5, 1, 1, true);
+            Simulator::Schedule(Seconds(5), [&h]() { h.fm->OnAck(5, 1); });
+            Simulator::Stop(Seconds(10));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels.size(), 1u, "one label");
+            NS_TEST_ASSERT_MSG_EQ(h.selector->labels[0].y, 0, "ground truth, not the ACK");
+            Simulator::Destroy();
         }
     }
 };
@@ -2426,7 +2537,7 @@ class ChannelAwareHeadersRoundTrip : public TestCase
 {
   public:
     ChannelAwareHeadersRoundTrip()
-        : TestCase("R4-A: beacon channel fields (+2 B), 11-dimensional blob (44 B) and handover (161 B) round-trip; old sizes unchanged")
+        : TestCase("R5: beacon noise field (+1 B), 10-dimensional blob (40 B) and handover (137 B), ACK with V (+2 B) round-trip; old sizes unchanged")
     {
     }
 
@@ -2448,27 +2559,25 @@ class ChannelAwareHeadersRoundTrip : public TestCase
         NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u, "plain beacon");
         b.hasChannel = true;
         b.noiseQ = 187;
-        b.lossQ = 40;
-        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 27u, "+2 B for the channel fields");
+        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 26u, "+1 B for the noise field (the loss byte was removed on 9 Nov 2026)");
         ErgrBeaconHeader b2 = RoundTrip(b);
         NS_TEST_ASSERT_MSG_EQ(b2.hasChannel, true, "flag");
         NS_TEST_ASSERT_MSG_EQ(int(b2.noiseQ), 187, "noise byte");
-        NS_TEST_ASSERT_MSG_EQ(int(b2.lossQ), 40, "loss byte");
         b.hasBlob = true;
-        b.blob.dim = 11;
-        for (int i = 0; i < 11; ++i)
+        b.blob.dim = 10;
+        for (int i = 0; i < 10; ++i)
         {
             b.blob.theta[i] = static_cast<int16_t>(100 * i - 500);
             b.blob.diagA[i] = static_cast<uint16_t>(7 * i);
         }
-        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u + 44u + 2u, "11-dimensional blob = 44 B");
+        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u + 40u + 1u, "10-dimensional blob = 40 B");
         ErgrBeaconHeader b3 = RoundTrip(b);
-        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.dim), 11, "blob dimension");
-        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.theta[10]), 500, "theta[10]");
-        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.diagA[10]), 70, "diag[10]");
-        NS_TEST_ASSERT_MSG_EQ(int(b3.noiseQ), 187, "channel fields behind the blob");
+        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.dim), 10, "blob dimension");
+        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.theta[9]), 400, "theta[9]");
+        NS_TEST_ASSERT_MSG_EQ(int(b3.blob.diagA[9]), 63, "diag[9]");
+        NS_TEST_ASSERT_MSG_EQ(int(b3.noiseQ), 187, "noise field behind the blob");
         b.blob.dim = 9;
-        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u + 36u + 2u, "9-dimensional blob = 36 B as before");
+        NS_TEST_ASSERT_MSG_EQ(b.GetSerializedSize(), 25u + 36u + 1u, "9-dimensional blob = 36 B as before");
         NS_TEST_ASSERT_MSG_EQ(int(RoundTrip(b).blob.dim), 9, "dimension 9 on the wire");
 
         ErgrHandoverHeader h;
@@ -2476,22 +2585,37 @@ class ChannelAwareHeadersRoundTrip : public TestCase
         h.toId = 2;
         h.cellId = 300;
         NS_TEST_ASSERT_MSG_EQ(h.GetSerializedSize(), 115u, "handover of 9 dimensions is still 115 B");
-        h.dim = 11;
-        for (int i = 0; i < 11; ++i)
+        h.dim = 10;
+        for (int i = 0; i < 10; ++i)
         {
             h.theta[i] = static_cast<int16_t>(i - 5);
             h.diag[i] = static_cast<uint16_t>(1000 + i);
         }
-        for (int k = 0; k < 55; ++k)
+        for (int k = 0; k < 45; ++k)
         {
             h.offDiag[k] = static_cast<int16_t>(k - 20);
         }
-        NS_TEST_ASSERT_MSG_EQ(h.GetSerializedSize(), 161u, "handover of 11 dimensions = 161 B");
+        NS_TEST_ASSERT_MSG_EQ(h.GetSerializedSize(), 137u, "handover of 10 dimensions = 137 B");
         ErgrHandoverHeader h2 = RoundTrip(h);
-        NS_TEST_ASSERT_MSG_EQ(int(h2.dim), 11, "dimension");
+        NS_TEST_ASSERT_MSG_EQ(int(h2.dim), 10, "dimension");
         NS_TEST_ASSERT_MSG_EQ(int(h2.cellId), 300, "cell id survives the dimension bit");
-        NS_TEST_ASSERT_MSG_EQ(int(h2.theta[10]), 5, "theta[10]");
-        NS_TEST_ASSERT_MSG_EQ(int(h2.offDiag[54]), 34, "last off-diagonal");
+        NS_TEST_ASSERT_MSG_EQ(int(h2.theta[9]), 4, "theta[9]");
+        NS_TEST_ASSERT_MSG_EQ(int(h2.offDiag[44]), 24, "last off-diagonal");
+
+        // ACK with the acker's V (QELAR-G, 9 Nov 2026): +2 B, flag in the top bit of senderId
+        ErgrAckHeader ack;
+        ack.ackerId = 5;
+        ack.senderId = 299;
+        ack.hopSeq = 65000;
+        NS_TEST_ASSERT_MSG_EQ(ack.GetSerializedSize(), 7u, "plain ACK");
+        ack.hasV = true;
+        ack.vValue = -4321;
+        NS_TEST_ASSERT_MSG_EQ(ack.GetSerializedSize(), 9u, "ACK + V");
+        ErgrAckHeader a2 = RoundTrip(ack);
+        NS_TEST_ASSERT_MSG_EQ(a2.hasV, true, "V flag");
+        NS_TEST_ASSERT_MSG_EQ(int(a2.senderId), 299, "sender survives the flag bit");
+        NS_TEST_ASSERT_MSG_EQ(int(a2.vValue), -4321, "V");
+        NS_TEST_ASSERT_MSG_EQ(int(a2.hopSeq), 65000, "hopSeq");
     }
 };
 
@@ -2499,7 +2623,7 @@ class NoiseCorrectedMarginAndFwNa : public TestCase
 {
   public:
     NoiseCorrectedMarginAndFwNa()
-        : TestCase("R4-A: x10 = x8 minus the candidate's excess noise (own noise embedded in a measured SNR); x11 = loss rate; FW-NA avoids the noisy head")
+        : TestCase("R4-A: x10 = x8 minus the candidate's excess noise (own noise embedded in a measured SNR); FW-NA avoids the noisy head")
     {
     }
 
@@ -2514,15 +2638,12 @@ class NoiseCorrectedMarginAndFwNa : public TestCase
         Time now = Seconds(1000);
         auto x = fb.BuildFull(ctx, nb, 2, now);
         NS_TEST_ASSERT_MSG_EQ_TOL(x[9], x[7], 1e-12, "no advertisement: x10 = x8");
-        NS_TEST_ASSERT_MSG_EQ_TOL(x[10], 0.0, 1e-12, "no advertisement: x11 = 0");
         nb.hasChannel = true;
         nb.noiseDb = base;
-        nb.lossRate = 0.25;
         ctx.hasMyNoise = true;
         ctx.myNoiseDb = base;
         x = fb.BuildFull(ctx, nb, 2, now);
         NS_TEST_ASSERT_MSG_EQ_TOL(x[9], x[7], 1e-12, "same noise as assumed: x10 = x8");
-        NS_TEST_ASSERT_MSG_EQ_TOL(x[10], 0.25, 1e-12, "x11 = advertised loss rate");
         nb.noiseDb = base + 6.0;   // the candidate sits in a noisy region: 6 dB less margin for data sent to it
         x = fb.BuildFull(ctx, nb, 2, now);
         NS_TEST_ASSERT_MSG_EQ_TOL(x[9], x[7] - 6.0 / params::learner::kMarginScaleDb, 1e-9, "6 dB more noise at the candidate: x10 falls by 6/30");
@@ -2553,11 +2674,11 @@ class NoiseCorrectedMarginAndFwNa : public TestCase
     }
 };
 
-class AddressedLossAndNoiseAreAdvertised : public TestCase
+class NoiseIsAdvertised : public TestCase
 {
   public:
-    AddressedLossAndNoiseAreAdvertised()
-        : TestCase("R4-A: a head estimates its addressed-frame loss from hopSeq gaps and its noise, and the neighbour sees both on the beacon")
+    NoiseIsAdvertised()
+        : TestCase("R4-A: a head estimates the ambient noise at its position and the neighbour sees it on the beacon")
     {
     }
 
@@ -2574,31 +2695,104 @@ class AddressedLossAndNoiseAreAdvertised : public TestCase
             r->SetLinkModel(link);
         }
         net.relay->SetNoiseMeter([]() { return 7.0; });   // the relay hears 7 dB more noise than the link model assumes
-        int seen = 0;
-        net.propagation->SetFrameFilter([&seen](uint32_t tx, uint32_t rx, uint8_t type) {
-            if (type != static_cast<uint8_t>(FrameType::Data) || tx != 2 || rx != 1)
-            {
-                return false;
-            }
-            return (++seen % 2) == 0; // every second DATA frame from the source to the relay is lost
-        });
-        net.Inject(30, 12.0);
-        net.RunAndFinish(900.0);
-        const double rate = net.relay->LossEstimate();
-        NS_TEST_ASSERT_MSG_EQ((rate > 0.25 && rate < 0.75), true, "about half of the frames addressed to the relay were missing: " << rate);
+        net.Inject(10, 12.0);
+        net.RunAndFinish(600.0);
         NS_TEST_ASSERT_MSG_EQ_TOL(net.relay->NoiseEstimateDb(), link->NoiseLevelDb() + 7.0, 0.3, "noise estimate = link model + 7 dB");
         const NeighbourEntry* row = net.source->Table().Find(1);
-        NS_TEST_ASSERT_MSG_EQ((row != nullptr && row->hasChannel), true, "the source knows the relay's channel fields");
+        NS_TEST_ASSERT_MSG_EQ((row != nullptr && row->hasChannel), true, "the source knows the relay's noise");
         NS_TEST_ASSERT_MSG_EQ_TOL(row->noiseDb, link->NoiseLevelDb() + 7.0, 0.8, "advertised noise (0.5 dB steps, EWMA, 50 s old at most)");
-        NS_TEST_ASSERT_MSG_EQ((row->lossRate > 0.2 && row->lossRate < 0.8), true, "advertised loss rate " << row->lossRate);
-        const NeighbourEntry* sinkRow = net.source->Table().Find(0);
-        NS_TEST_ASSERT_MSG_EQ((sinkRow == nullptr || sinkRow->hasChannel == false || sinkRow->noiseDb > 0.0), true, "sinks advertise too (when heard)");
         Simulator::Destroy();
         Config::SetDefault("ns3::cbergr::ErgrEmhcRouting::ChannelAwareBeacons", BooleanValue(params::channelaware::kEnabled));
         if (!std::getenv("CBERGR_KEEP"))
         {
             std::filesystem::remove_all(dir);
         }
+    }
+};
+
+// R5: QELAR-G's model-based Q and its V on beacons and ACKs.
+class QelarQValueFollowsThePaperForm : public TestCase
+{
+  public:
+    QelarQValueFollowsThePaperForm()
+        : TestCase("R5: QELAR-G Q = P (r_s + gamma V_j) + (1 - P) (r_f + gamma V_i), sink terminal, V from the fresher of beacon and ACK")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<SelectorQelar> q = MakeBaseline<SelectorQelar>("ns3::cbergr::SelectorQelar", "G=1;Alpha1=0.5;Alpha2=0.5;Beta1=0.5;Beta2=0.5;Gamma=0.9");
+        SelectorServices sv;
+        sv.nodeId = 1;
+        sv.initialEnergyJ = 300.0;
+        q->SetServices(sv);
+        PacketCtx ctx = MakeCtx();
+        ctx.myEnergyJ = 150.0;                 // c_i = 0.5
+        NeighbourEntry j = MakeNeighbour(7, 0.0);
+        j.battery = 1.0;                       // c_j = 0, E_j = 300 J
+        j.hasQ = true;
+        j.advertisedQ = -2.0;
+        const double mean = 225.0;
+        const double di = 2.0 / M_PI * std::atan(150.0 - mean), dj = 2.0 / M_PI * std::atan(300.0 - mean);
+        const double rs = -1.0 - 0.5 * (0.5 + 0.0) + 0.5 * (di + dj);
+        const double rf = -1.0 - 0.5 * 0.5 + 0.5 * di;
+        const double p = 0.5; // Beta(1,1) prior, no labels yet
+        NS_TEST_ASSERT_MSG_EQ_TOL(q->QValue(ctx, j, mean, Seconds(1000)), p * (rs + 0.9 * -2.0) + (1 - p) * (rf + 0.9 * 0.0), 1e-12, "Q formula");
+        Decision d;
+        d.fwdId = 7;
+        for (int k = 0; k < 8; ++k)
+        {
+            q->OnLabel(d, 1, LabelSource::Ack, Seconds(1001));
+        }
+        NS_TEST_ASSERT_MSG_EQ_TOL(q->SuccessEstimate(7), 9.0 / 10.0, 1e-12, "P = (s + 1) / (s + f + 2)");
+        NeighbourEntry sink = MakeNeighbour(8, 0.0);
+        sink.isSink = true;
+        sink.hasQ = true;
+        sink.advertisedQ = -5.0;
+        NS_TEST_ASSERT_MSG_EQ_TOL(q->ValueOf(sink), 0.0, 1e-12, "a sink is terminal");
+        q->OnAckValue(7, -1.0, Seconds(2000));  // newer than j's beacon (1000 s)
+        NS_TEST_ASSERT_MSG_EQ_TOL(q->ValueOf(j), -1.0, 1e-12, "the fresher V (from the ACK) is used");
+        double v = 0.0;
+        NS_TEST_ASSERT_MSG_EQ(q->AckValue(v), true, "QELAR-G puts its V on its ACKs");
+    }
+};
+
+// R5: the power rules of FW-P, the "lowest level that reaches the chosen head" rule and RR-P.
+class PowerRulesPickTheLowestFeasibleLevel : public TestCase
+{
+  public:
+    PowerRulesPickTheLowestFeasibleLevel()
+        : TestCase("R5: FW-P / LowestReachChosen / RR-P send at the lowest power level with predicted margin >= 0")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        auto link = std::make_shared<AcousticLinkModel>();
+        PacketCtx ctx = MakeCtx();
+        const double req = link->SnrReqDb(ctx.dataBytes);
+        FeatureBuilder fb(link, true);
+        NeighbourEntry strong = MakeNeighbour(11, req + 7.0);  // margin +7 dB at full power: the -6 dB level still reaches
+        NeighbourEntry medium = MakeNeighbour(12, req + 4.0);  // -3 dB level reaches, -6 dB does not
+        NeighbourEntry weak = MakeNeighbour(13, req - 1.0);    // nothing reaches: full power
+        NS_TEST_ASSERT_MSG_EQ(LowestFeasibleLevel(fb, ctx, strong, Seconds(1000)), 0, "strong: lowest level");
+        NS_TEST_ASSERT_MSG_EQ(LowestFeasibleLevel(fb, ctx, medium, Seconds(1000)), 1, "medium: middle level");
+        NS_TEST_ASSERT_MSG_EQ(LowestFeasibleLevel(fb, ctx, weak, Seconds(1000)), 2, "weak: full power");
+        Ptr<SelectorFixedWeight> lr = MakeBaseline<SelectorFixedWeight>("ns3::cbergr::SelectorFixedWeight", "PowerRule=LowestReachChosen");
+        std::vector<Candidate> eligible = {{11, &strong}, {13, &weak}};
+        Decision d = lr->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ(int(d.fwdId), 11, "chosen at full power: the strong head");
+        NS_TEST_ASSERT_MSG_EQ(int(d.powerLevel), 0, "then sent at the lowest level that reaches it");
+        Ptr<SelectorFixedWeight> full = MakeBaseline<SelectorFixedWeight>("ns3::cbergr::SelectorFixedWeight", "");
+        NS_TEST_ASSERT_MSG_EQ(int(full->Select(ctx, eligible, Seconds(1000)).powerLevel), 2, "FW without a power rule: full power");
+        Ptr<SelectorFixedWeight> fwp = MakeBaseline<SelectorFixedWeight>("ns3::cbergr::SelectorFixedWeight", "PowerRule=LowestFeasible");
+        Decision dp = fwp->Select(ctx, eligible, Seconds(1000));
+        NS_TEST_ASSERT_MSG_EQ(int(dp.powerLevel), (dp.fwdId == 11 ? 0 : 2), "FW-P: the chosen head's lowest feasible level");
+        Ptr<SelectorRoundRobin> rr = MakeBaseline<SelectorRoundRobin>("ns3::cbergr::SelectorRoundRobin", "WithFeedback=true;LowestReach=true");
+        std::vector<Candidate> one = {{12, &medium}};
+        NS_TEST_ASSERT_MSG_EQ(int(rr->Select(ctx, one, Seconds(1000)).powerLevel), 1, "RR-P: lowest level that reaches the round-robin head");
     }
 };
 
@@ -2880,7 +3074,7 @@ class HandoverGivesTheNewHeadTheOldModel : public TestCase
                                       "unplanned: theta_" << i << " within quantisation");
             evidence += oldModel.OwnEvidenceDiag()[i];
         }
-        NS_TEST_ASSERT_MSG_EQ_TOL(taker->Model().TraceOwn(), 0.7 * (11.0 + evidence), 9.0 * 0.7 / 16.0 + 0.2, // 11 = the model has 11 dimensions; the two unused ones sit at the prior
+        NS_TEST_ASSERT_MSG_EQ_TOL(taker->Model().TraceOwn(), 0.7 * (10.0 + evidence), 9.0 * 0.7 / 16.0 + 0.2, // 10 = the model has 10 dimensions; the unused one sits at the prior
                                   "unplanned: A scaled by BetaHandover = 0.7");
         NS_TEST_ASSERT_MSG_EQ((taker->Model().TraceOwn() < newModel.TraceOwn()), true, "less confident than after a planned handover");
 
@@ -3700,7 +3894,10 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new NoiseBurstAndCounterfactualLogAreConsistent, TestCase::QUICK);
         AddTestCase(new ChannelAwareHeadersRoundTrip, TestCase::QUICK);
         AddTestCase(new NoiseCorrectedMarginAndFwNa, TestCase::QUICK);
-        AddTestCase(new AddressedLossAndNoiseAreAdvertised, TestCase::QUICK);
+        AddTestCase(new NoiseIsAdvertised, TestCase::QUICK);
+        AddTestCase(new QelarQValueFollowsThePaperForm, TestCase::QUICK);
+        AddTestCase(new PowerRulesPickTheLowestFeasibleLevel, TestCase::QUICK);
+        AddTestCase(new EvidenceRuleLabelsZeroWhenTheForwarderIsHeardLate, TestCase::QUICK);
     }
 };
 

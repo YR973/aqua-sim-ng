@@ -33,6 +33,7 @@ class SelectorRoundRobin : public ForwarderSelector
     /// Features of the chosen option are computed for the decision log only; they do not influence the choice.
     std::unique_ptr<FeatureBuilder> m_features;
     bool m_withFeedback = false;
+    bool m_lowestReach = false; ///< RR-P (9 Nov 2026): send at the lowest level whose predicted margin to the chosen head is >= 0
     bool m_requestAck = true;   ///< with feedback: ask for an ACK on first attempts (false = bitmap labels only)
     int32_t m_lastId = -1; ///< id chosen last time; the next choice is the next larger id (wrapping)
 };

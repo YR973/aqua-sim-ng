@@ -75,7 +75,8 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("DeadGuardS", &s.deadGuardS, "Guard past the advertised next beacon before a head counts as overdue (s)");
     c.Add("DeadReportRepeatS", &s.deadReportRepeatS, "Minimum time between two reports of the same silent head by one node (s)");
     c.Add("DeadQuorum", &s.deadQuorum, "Observers (including the node itself) needed to declare a head dead");
-    c.Add("ChannelAwareBeacons", &s.channelAwareBeacons, "Heads and sinks advertise ambient noise and addressed-frame loss rate on the beacon (+2 B)");
+    c.Add("LabelRule", &s.labelRule, "Labels of attempts without an ACK: Evidence (default), Censor or TimeoutZero");
+    c.Add("ChannelAwareBeacons", &s.channelAwareBeacons, "Heads and sinks advertise the ambient noise at their position on the beacon (+1 B)");
     c.Add("LeanBeacons", &s.leanBeacons, "N-C: members beacon only before elections, head beacons stretch (Trickle style)");
     c.Add("TrickleMaxFactor", &s.trickleMaxFactor, "Largest head beacon interval in base periods (lean mode)");
     c.Add("HeaderFirstRx", &s.headerFirstRx, "N-A: overheard unicast data is charged preamble + header only");
@@ -373,6 +374,7 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetAttribute("BeaconPeriodS", DoubleValue(s.beaconPeriodS));
         routing->SetAttribute("LeanBeacons", BooleanValue(s.leanBeacons));
         routing->SetAttribute("ChannelAwareBeacons", BooleanValue(s.channelAwareBeacons));
+        routing->SetAttribute("LabelRule", StringValue(s.labelRule));
         routing->SetAttribute("QuorumDetection", BooleanValue(s.quorumDetection));
         routing->SetAttribute("MacDelayAllowanceS",
                               DoubleValue(s.mac == "Csma" ? (params::mac::kCwMin + params::mac::kCwControl) * params::mac::kSlotS : 0.0));

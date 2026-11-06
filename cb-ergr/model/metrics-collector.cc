@@ -471,6 +471,11 @@ MetricsCollector::OnLabel(uint32_t node,
     m_labelsBySource[src]++;
     m_labelDelaySumS += delayS;
     m_labelDelays.push_back(delayS);
+    if (label == 1)
+    {
+        m_labelOnes++;
+        m_falsePositives += truth ? 0 : 1;   // label 1 although the forwarder never got the frame
+    }
     if (label == 0)
     {
         m_labelZeros++;
@@ -654,7 +659,7 @@ MetricsCollector::WriteDecisionLine(uint32_t node,
     {
         return;
     }
-    static const char* names[] = {"ACK", "ACK_TIMEOUT", "BITMAP", "EXPIRY", "VOID", "CENSORED"};
+    static const char* names[] = {"ACK", "ACK_TIMEOUT", "BITMAP", "EXPIRY", "VOID", "CENSORED", "HEARD"};
     m_decisionsFile << NowS() - delayS << ',' << node << ',' << fwd << ',' << d.fwdCell << ',' << hopSeq << ',' << int(d.powerLevel) << ','
                     << int(attempt) << ',' << ar << ',' << learn << ',' << int(d.numCandidates) << ','
                     << int(d.chosenRank);
@@ -1022,11 +1027,11 @@ MetricsCollector::WriteSummary()
          "energy_tx_j,energy_rx_j,energy_idle_j,rx_energy_share,fnd_s,hnd_s,jain_residual_energy,"
          "elections_per_hour,head_tenure_mean_s,attempts_total,retx_per_delivered,hop_success_truth,"
          "ar_rate,labels_total,label_ack_frac,label_acktimeout_frac,label_bitmap_frac,label_expiry_frac,"
-         "label_void_frac,label_censored_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels,"
+         "label_void_frac,label_censored_frac,label_heard_frac,label_delay_mean_s,label_delay_p95_s,false_negative_rate,duplicate_labels,"
          "decisions_scored,regret_mean,regret_mean_multi_viable,share_multi_viable";
     const FrameType energyTypes[] = {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election,
                                      FrameType::Handover, FrameType::Nack};
-    f << ",censored_labels,censored_received,ack_timeouts_fired,ack_timeouts_false,peak_pending_attempts";
+    f << ",censored_labels,censored_received,ack_timeouts_fired,ack_timeouts_false,peak_pending_attempts,label_positive_rate,false_positive_rate";
     f << ",mac_drops,mac_deferrals,solicits_sent,solicits_answered,nohead_giveups,nohead_giveups_cell_had_head,cells_with_head_share,nodes_in_headless_cells_share";
     f << ",dead_declarations,dead_false_declarations,dead_by_quorum,dead_by_expiry,dead_heads_detected,dead_first_latency_mean_s";
     for (FrameType t : energyTypes)
@@ -1085,7 +1090,8 @@ MetricsCollector::WriteSummary()
     {
         firstLatencySum += entry.second;
     }
-    f << ',' << m_censored << ',' << m_censoredReceived << ',' << m_timeoutsFired << ',' << m_timeoutsFalse << ',' << m_peakPending;
+    f << ',' << m_censored << ',' << m_censoredReceived << ',' << m_timeoutsFired << ',' << m_timeoutsFalse << ',' << m_peakPending << ','
+      << (m_totalLabels ? double(m_labelOnes) / m_totalLabels : 0.0) << ',' << (m_labelOnes ? double(m_falsePositives) / m_labelOnes : 0.0);
     f << ',' << m_macDrops << ',' << m_macDeferrals << ',' << m_solicitsSent << ',' << m_solicitAnswered << ',' << m_noHeadGiveUps << ',' << m_noHeadGiveUpsWithHead
       << ',' << (m_covOccupied > 0 ? m_covHeaded / m_covOccupied : -1.0) << ',' << (m_covNodes > 0 ? m_covNodesHeadless / m_covNodes : -1.0);
     f << ',' << m_deadDeclarations << ',' << m_deadFalse << ',' << m_deadByQuorum << ',' << m_deadByExpiry << ','
@@ -1133,7 +1139,7 @@ MetricsCollector::WriteNodes()
     }
     f << ",attempts,first_attempts,retransmissions,hop_success_first,hop_success_retry,hop_success_rate_truth,"
          "ar_requested,acks_sent,acks_received,ack_timeouts,labels_ack,labels_acktimeout,labels_bitmap,"
-         "labels_expiry,labels_void,labels_censored,labels_1,labels_0,label_delay_mean_s,duplicate_labels";
+         "labels_expiry,labels_void,labels_censored,labels_heard,labels_1,labels_0,label_delay_mean_s,duplicate_labels";
     f << '\n';
     for (const auto& entry : m_nodes)
     {
@@ -1176,7 +1182,7 @@ MetricsCollector::WriteLinks()
     std::ofstream f(m_cfg.outDir + "/links.csv");
     f << std::setprecision(8);
     f << "sender,forwarder,attempts,successes_truth,labels_1,labels_0,labels_ack,labels_acktimeout,"
-         "labels_bitmap,labels_expiry,labels_void,labels_censored,retransmissions,mean_distance_m,mean_snr_db,"
+         "labels_bitmap,labels_expiry,labels_void,labels_censored,labels_heard,retransmissions,mean_distance_m,mean_snr_db,"
          "mean_predicted_success,first_use_s,last_use_s\n";
     for (const auto& entry : m_links)
     {

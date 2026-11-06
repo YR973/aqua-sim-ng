@@ -85,6 +85,9 @@ class ErgrAckHeader : public Header
     uint16_t ackerId = 0;
     uint16_t senderId = 0;
     uint16_t hopSeq = 0;
+    /// 9 Nov 2026 (QELAR-G): the acker's state value V, +2 B; flagged by the top bit of senderId on the wire (node ids < 32768).
+    bool hasV = false;
+    int16_t vValue = 0;      ///< V in units of params::selector::kQlValueScale
 };
 
 // ---------------------------------------------------------------- BEACON ---
@@ -100,8 +103,8 @@ struct ReceiptEntry
 /// Model blob shared on beacons (spec §6.3). theta scaled by 1/1024 (int16), diag(A) by 1/16 (uint16).
 struct ModelBlob
 {
-    static constexpr int kDim = 11;     ///< largest model (9 base features + x10, x11 of the channel-aware beacons)
-    uint8_t dim = 9;                    ///< how many entries are on the wire (9 or 11); the rest stay 0
+    static constexpr int kDim = 10;     ///< largest model (9 base features + x10 of the channel-aware beacons)
+    uint8_t dim = 9;                    ///< how many entries are on the wire (9 or 10); the rest stay 0
     std::array<int16_t, kDim> theta{};
     std::array<uint16_t, kDim> diagA{};
 };
@@ -130,13 +133,11 @@ class ErgrBeaconHeader : public Header
     uint32_t BaseBytes() const;
     uint32_t ReceiptBytes() const;
     uint32_t BlobBytes() const;
-    /// 7 Nov 2026 channel-aware fields (+2 B): ambient noise in 0.5 dB steps above params::channelaware::kNoiseRefDb, and the pooled
-    /// loss rate of DATA frames addressed to this node (0..255 = 0..100 %).
-    uint32_t ChannelBytes() const { return hasChannel ? 2 : 0; }
+    /// Channel-aware field (+1 B since 9 Nov 2026): ambient noise in 0.5 dB steps above params::channelaware::kNoiseRefDb.
+    uint32_t ChannelBytes() const { return hasChannel ? 1 : 0; }
 
     bool hasChannel = false;
     uint8_t noiseQ = 0;
-    uint8_t lossQ = 0;
     uint16_t nodeId = 0;
     uint16_t cellId = 0;
     uint8_t role = 0;
@@ -207,7 +208,7 @@ class ErgrHandoverHeader : public Header
     uint16_t fromId = 0;
     uint16_t toId = 0;
     uint16_t cellId = 0;
-    uint8_t dim = 9;                    ///< model size on the wire: 9 (115 B) or 11 (161 B); carried in the top bit of cellId
+    uint8_t dim = 9;                    ///< model size on the wire: 9 (115 B) or 10 (137 B); carried in the top bit of cellId
     std::array<int16_t, kDim> theta{};
     std::array<uint16_t, kDim> diag{};
     std::array<int16_t, kOffDiag> offDiag{};
