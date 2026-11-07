@@ -374,7 +374,8 @@ def report(a):
             return f"{mean_(x):.1f} ({mean_(g(k,'e_tx')):.0f}/{mean_(g(k,'e_rx')):.0f}/{mean_(g(k,'e_idle')):.0f})"
         def fnd(k):
             x = g(k, "fnd")
-            return f"{mean_([v for v in x if v >= 0]):.0f} ({sum(1 for v in x if v >= 0)}/20)" if x else "-"
+            dead = [v for v in x if v >= 0] if x else []
+            return (f"{mean_(dead):.0f} ({len(dead)}/20)" if dead else "none (0/20)") if x else "-"
         w(f"| {t} | {cname(c)} | {m} | {one(1)} | {one(2)} | " + (f"{dk[0]:+.3f} ±{dk[1]:.3f}" if dk else "-") + f" | {ph:.3f} | {dfw(1)} | {dfw(2)} | {dl(1)} | {dl(2)} | {en(1)} | {en(2)} | {fnd(1)} | {fnd(2)} |")
     w("\n(first death: mean over the runs in which a node died, with the number of such runs of 20.)\n")
 

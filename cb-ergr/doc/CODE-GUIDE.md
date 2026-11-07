@@ -228,6 +228,13 @@ The exact column names are in the header row of each file; Claude Code keeps thi
 - **Cost instrumentation**: `--MeasureCpu=true` (std::chrono around Select/OnSent/OnLabel); every run writes `cost.csv` (CPU, beacon byte split, neighbour rows, peak pending records, `sizeof`s, CB diagnostics), `resources.csv` (wall time, peak RSS) and, with `--ComputeRegret=true`, `regret_by_time.csv`. Reports: `scripts/perf.py` (Step 3 tables), `scripts/step4.py` (cost, memory, communication, learning, robustness), `scripts/opcount.py` (analytic operation counts and MCU estimates), `scripts/statlib.py` (t, TOST, Holm).
 - **Change scenarios**: `NoiseBandOffsetDb` with `NoiseBandStartS` / `NoiseBandEndS` (burst), `KillHeadsAtS` / `KillHeadsCells` (head failures).
 
+## 5c. Added on 7 Nov 2026 (k = 1 experiment)
+
+- **`NeighbourRule`** (`Adjacent` | `Paper32`), `ErgrEmhcRouting::IsNeighbourCell` and `GetEligible`: Paper32 = P0's 32 neighbour cells with G1/G2 and no distance filter; `HeadsPerCell` (k) was already there.
+- **Election options (off):** `HelloScoreStepDown` (step-down compares a claimant by the score in its Hello, `NeighbourEntry::helloScore`) and `ReassertHello` (a head repeats its Hello when it hears a worse claimant in a full cell). See CONFIRM E54.
+- **Reporting files:** `heads.csv`, `heads_time.csv` (heads per cell, over-k episodes, tenure ends, candidates per decision; `MetricsCollector::WriteHeads`, `OnHeadChange`, `OnEligible`, `OnHeadsSample`), `attempts.csv` (`--LogAttempts=true`, `LossBudget::AttemptRows`), `packets.csv` columns `src_head, drop_head, drop_depth_m, drop_dsink_m` (from `SetNodeStateProbe`, ground truth, never read by a node).
+- **Scripts:** `scripts/k1.py` (fit / run / extra / report; resumable). Test: `OneHeadPerCellNeverHasTwoHeadsForLong`.
+
 ## 6. Debugging: see what one node is thinking
 
 ```bash

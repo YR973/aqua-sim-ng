@@ -32,8 +32,12 @@
  },
  "election": {
   "kBeta": 0.9,
+  "kHelloScoreStepDown": false,
   "kJitterMaxS": 0.1,
   "kMembershipHysteresisM": 20.0,
+  "kReassertHello": false,
+  "kReassertJitterS": 0.5,
+  "kReassertMinGapS": 2.0,
   "kSlotS": 1.0
  },
  "energy": {
