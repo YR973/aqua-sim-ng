@@ -2,6 +2,7 @@
 settings against the table-expiry backstop (N = 100, 10 head kills at 1500 s, held-out training seeds 106-110).
 Usage: quorum_grid.py BINARY [OUTROOT]. Needs the scenario binary of a build with QuorumDetection.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import subprocess, csv, sys, os
 from concurrent.futures import ThreadPoolExecutor
 B=sys.argv[1]

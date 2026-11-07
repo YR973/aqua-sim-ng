@@ -5,6 +5,7 @@ Usage: compare_smoke.py BINARY OUTROOT [--rate 0.004] [--seeds 101,102,103] [--n
 Results of each run go to OUTROOT/<variant>_<seed>/; the table is also written to OUTROOT/compare.csv.
 Training seeds (101-110) are the default so nothing here touches the test seeds 1-20.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, subprocess, sys, os
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd

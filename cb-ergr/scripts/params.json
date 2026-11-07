@@ -108,7 +108,8 @@
   "kLogNodeTimeline": false,
   "kLogNodes": true,
   "kLogPackets": true,
-  "kNodeLogIntervalS": 1000.0
+  "kNodeLogIntervalS": 1000.0,
+  "kNumberedRuns": true
  },
  "mac": {
   "kCwControl": 2,

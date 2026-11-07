@@ -33,6 +33,7 @@
 #include "ns3/neighbour-table.h"
 #include "ns3/noise-band.h"
 #include "ns3/recent-set.h"
+#include "ns3/run-summary.h"
 #include "ns3/scenario-runner.h"
 #include "ns3/energy-price.h"
 #include "ns3/gm-shadowing.h"
@@ -3912,6 +3913,76 @@ class OneHeadPerCellNeverHasTwoHeadsForLong : public TestCase
 };
 
 
+// 7 Nov 2026: a repeated run must not overwrite an earlier one (<OutDir>_run<N>), and every run writes the short run_summary.txt.
+class NumberedRunsAndRunSummary : public TestCase
+{
+  public:
+    NumberedRunsAndRunSummary()
+        : TestCase("Numbered output folders count up and never reuse a number; run_summary.txt holds the headline numbers")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        namespace fs = std::filesystem;
+        const std::string base = (fs::temp_directory_path() / "cb-ergr-test-numbered").string();
+        fs::remove_all(fs::temp_directory_path() / "cb-ergr-test-numbered_run1");
+        fs::remove_all(fs::temp_directory_path() / "cb-ergr-test-numbered_run2");
+        fs::remove_all(fs::temp_directory_path() / "cb-ergr-test-numbered_run7");
+        fs::remove_all(fs::temp_directory_path() / "cb-ergr-test-numbered_run8");
+        fs::remove_all(fs::temp_directory_path() / "cb-ergr-test-numbered_runX");
+        int n1 = 0, n2 = 0, n3 = 0;
+        std::string d1 = NextRunDir(base, n1);
+        std::string d2 = NextRunDir(base + "/", n2); // a trailing '/' makes no difference
+        NS_TEST_ASSERT_MSG_EQ(n1, 1, "first run is number 1");
+        NS_TEST_ASSERT_MSG_EQ(n2, 2, "second run is number 2");
+        NS_TEST_ASSERT_MSG_EQ((d1 != d2 && fs::is_directory(d1) && fs::is_directory(d2)), true, "two different folders exist");
+        fs::create_directories(base + "_run7");
+        fs::create_directories(base + "_runX"); // not a number: ignored
+        std::string d3 = NextRunDir(base, n3);
+        NS_TEST_ASSERT_MSG_EQ(n3, 8, "the next number follows the highest existing one");
+
+        // a run writes run_summary.txt with the method, the conditions and the results
+        ScenarioSettings settings;
+        settings.outDir = d1;
+        settings.runNumber = n1;
+        settings.seed = 3;
+        settings.numNodes = 40;
+        settings.numSources = 4;
+        settings.simTimeS = 700;
+        settings.warmupS = 300;
+        settings.pktRateHz = 0.02;
+        settings.selector = "FixedWeight";
+        ScenarioConfig config;
+        RegisterSettings(config, settings);
+        ScenarioResult r = RunScenario(settings, config);
+        std::ifstream in(d1 + "/run_summary.txt");
+        std::stringstream text;
+        text << in.rdbuf();
+        const std::string t = text.str();
+        for (const char* needle : {"RUN", "METHOD", "CONDITIONS", "RESULTS: DELIVERY", "RESULTS: ENERGY AND POWER", "packet delivery ratio (PDR)",
+                                   "energy per delivered packet", "average power per node", "FixedWeight", "run number"})
+        {
+            NS_TEST_ASSERT_MSG_EQ((t.find(needle) != std::string::npos), true, "run_summary.txt contains: " << needle);
+        }
+        auto row = ReadCsv(d1 + "/summary.csv")[0];
+        NS_TEST_ASSERT_MSG_EQ((r.packetsCreated > 0), true, "traffic");
+        // "  packets created      <number>": the file counts after the warm-up, like summary.csv
+        size_t at = t.find("packets created");
+        NS_TEST_ASSERT_MSG_EQ((at != std::string::npos), true, "packets created line");
+        std::istringstream line(t.substr(at + std::string("packets created").size()));
+        long inFile = -1;
+        line >> inFile;
+        NS_TEST_ASSERT_MSG_EQ(inFile, static_cast<long>(std::stod(row["packets_created"])), "created packets in the file match summary.csv");
+        for (const std::string& d : {d1, d2, d3, base + "_run7", base + "_runX"})
+        {
+            fs::remove_all(d);
+        }
+    }
+};
+
+
 class CbErgrTestSuite : public TestSuite
 {
   public:
@@ -3982,6 +4053,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new PowerRulesPickTheLowestFeasibleLevel, TestCase::QUICK);
         AddTestCase(new EvidenceRuleLabelsZeroWhenTheForwarderIsHeardLate, TestCase::QUICK);
         AddTestCase(new OneHeadPerCellNeverHasTwoHeadsForLong, TestCase::QUICK);
+        AddTestCase(new NumberedRunsAndRunSummary, TestCase::QUICK);
     }
 };
 

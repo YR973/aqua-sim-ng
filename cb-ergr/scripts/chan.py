@@ -7,6 +7,7 @@
 All runs use configs/g-base.txt (paper settings, Csma, calibrated channel) + configs/scn-<name>.txt + ChannelAwareBeacons=true (the same
 beacon load for every method; FW0 = FW without the channel fields is run in the base scenario to measure the beacon cost).
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, collections, csv, json, math, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

@@ -9,6 +9,7 @@ Oracle, and prints per scenario: oracle hop success, oracle PDR, and PDR gaps or
 oracle - RR and oracle - RR+FB. Only scenarios with an oracle - FW gap of roughly >= 0.1 are meaningful for the question
 "does learning help". Writes OUTROOT/headroom.csv and OUTROOT/headroom.md.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, csv, itertools, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 import statistics

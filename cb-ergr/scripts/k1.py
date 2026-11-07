@@ -10,6 +10,7 @@ Tests: T1 ideal links + old cells (433 m, Paper32 neighbours), T2 ideal + new ce
 Every run: configs/g-base.txt (Csma, 17.8 kbit/s, TPre 0, 300 J, 3 sinks), ChannelAwareBeacons=true, LabelRule=Evidence (as round 5), base scenario.
 Runs are resumable: a run whose summary.csv exists is not repeated.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, collections, csv, json, math, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

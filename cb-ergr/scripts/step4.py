@@ -9,6 +9,7 @@ Usage:
   step4.py memory   STEP3DIR                # neighbour table, pending records, process memory, from the Step 3 runs
 Each prints markdown and writes OUTROOT/<part>.md.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, collections, csv, glob, math, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

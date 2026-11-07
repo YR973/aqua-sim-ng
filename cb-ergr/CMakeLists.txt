@@ -33,6 +33,7 @@ build_lib(
         model/scenario-config.cc
         helper/cb-ergr-helper.cc
         helper/scenario-runner.cc
+        helper/run-summary.cc
     HEADER_FILES
         model/cb-ergr-config.h
         model/cb-ergr-params.h
@@ -73,6 +74,7 @@ build_lib(
         model/scenario-config.h
         helper/cb-ergr-helper.h
         helper/scenario-runner.h
+        helper/run-summary.h
     LIBRARIES_TO_LINK
         ${libaqua-sim-ng}
         ${libmobility}

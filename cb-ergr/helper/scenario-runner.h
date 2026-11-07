@@ -36,6 +36,8 @@ struct ScenarioSettings
     std::string flags = "";
     std::string selectorAttributes = "";   // "Name=value;Name=value" set on every selector, e.g. WithFeedback=true
     std::string outDir = "results/run";
+    bool numberedRuns = params::logging::kNumberedRuns; // the cb-ergr-scenario program writes to <OutDir>_run<N> (a new N every run); tests and sweep scripts switch it off
+    int runNumber = 0;                     // filled in by the program when numberedRuns is on (0 = not numbered)
     std::string configFile = "";
     int seed = params::scenario::kSeed;
     int run = params::scenario::kRun;

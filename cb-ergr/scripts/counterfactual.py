@@ -17,6 +17,7 @@ Reports (per cell and method, mean over seeds):
   3. for CB: the share of decisions where CB's choice differs from FW's, and the outcome of both choices on those decisions.
 Hop success here is per DATA transmission (retries included), not end-to-end PDR.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, collections, csv, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

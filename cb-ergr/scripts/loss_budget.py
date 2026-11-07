@@ -5,6 +5,7 @@ Usage: loss_budget.py BINARY OUTROOT [--seeds 101-120] [--jobs 4] [--extra "--No
 Runs P0 and ERGR-EMHC-g (round robin, ideal links, no shadowing, 0 m/s, N = 300) with 1 and 10 sources and averages
 loss_budget.csv (hop causes, packet causes, airtime shares) and PDR over the seeds. Writes OUTROOT/loss_budget.md.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, csv, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

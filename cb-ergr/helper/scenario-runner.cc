@@ -4,6 +4,7 @@
  */
 
 #include "scenario-runner.h"
+#include "run-summary.h"
 
 #include "ns3/aqua-sim-ng-module.h"
 #include "ns3/cb-ergr-helper.h"
@@ -56,6 +57,7 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("SelectorAttributes", &s.selectorAttributes, "Attributes of the selector: Name=value;Name=value");
     c.Add("Flags", &s.flags, "Free text describing the variant (goes to summary.csv)");
     c.Add("OutDir", &s.outDir, "Directory for the result files");
+    c.Add("NumberedRuns", &s.numberedRuns, "Write to <OutDir>_run<N> with a new run number N every time, so no earlier result is overwritten (env CB_ERGR_NUMBERED_RUNS=0 sets the default off)");
     c.Add("Seed", &s.seed, "Random seed");
     c.Add("RngRun", &s.run, "Run number");
     c.Add("SimTimeS", &s.simTimeS, "Simulated time (s)");
@@ -705,6 +707,7 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     result.rxEnergyShare = metrics->RxEnergyShare();
     result.firstNodeDeathS = metrics->FirstNodeDeathS();
     result.wallSeconds = wallS;
+    WriteRunSummary(s, config, result);
     return result;
 }
 

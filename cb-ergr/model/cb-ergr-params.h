@@ -356,6 +356,7 @@ constexpr double kNoiseStepDb = 0.5;      // [DECIDED 7 Nov 2026]
 // ------------------------------------------------------------- logging ----
 namespace logging
 {
+constexpr bool kNumberedRuns = true;     // [DECIDED 7 Nov 2026] cb-ergr-scenario writes to <OutDir>_run<N>, a new N every run (no overwriting); scripts that need fixed paths set CB_ERGR_NUMBERED_RUNS=0
 constexpr bool kLogNodes = true;         // [DESIGN] K§2.6
 constexpr bool kLogLinks = true;
 constexpr bool kLogPackets = true;

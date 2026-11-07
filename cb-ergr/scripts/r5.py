@@ -10,6 +10,7 @@
   r5.py life     BINARY OUTROOT   power-lifetime test with a 100 J battery (N300, 10 seeds, base)
 Every run: configs/g-base.txt (Csma, calibrated channel) + configs/scn-<scenario>.txt, ChannelAwareBeacons=true, LabelRule=Evidence.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, collections, csv, json, math, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

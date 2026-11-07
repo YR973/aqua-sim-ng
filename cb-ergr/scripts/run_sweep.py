@@ -20,6 +20,7 @@ and is SKIPPED if its summary.csv already exists, so an interrupted sweep can si
 Seeds 1-20 are the TEST seeds: use them only for final results, after every setting is frozen on training seeds
 101-110 (kickoff §5). The script refuses them unless --allow-test-seeds is given.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse
 import itertools
 import os

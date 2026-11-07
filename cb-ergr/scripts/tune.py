@@ -18,6 +18,7 @@ Output: DIR/log.csv (every evaluation), DIR/best.txt, and (with --write-config P
     SelectorAttributes = ...
 that run_sweep.py / compare_smoke.py can use.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse
 import csv
 import json

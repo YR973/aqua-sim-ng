@@ -8,6 +8,7 @@ Each --variant is NAME=Selector:attributes (attributes as in --SelectorAttribute
 Prints mean +- 95% CI (Student t) of PDR plus regret, AR rate, ACK frames per delivered packet, ACK energy and the hop success,
 and writes OUTROOT/compare.csv (one row per run). Paired differences against --reference NAME are printed too.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, csv, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

@@ -14,6 +14,7 @@ variants: FW and CB-warm on N = 300 with 10 and 30 sources, 10 seeds, under (a) 
           second cell column, (c) the same band as a burst from 800 s to 1400 s, (d) the heads of 6 cells killed at 1000 s;
           windowed PDR (100 s windows) and recovery times.
 """
+import os as _os_nr; _os_nr.environ.setdefault("CB_ERGR_NUMBERED_RUNS", "0")  # sweeps need fixed result paths (run_sweep, tune, ... read OutDir/summary.csv)
 import argparse, collections, csv, json, math, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 

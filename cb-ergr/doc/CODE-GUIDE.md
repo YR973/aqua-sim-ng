@@ -235,6 +235,11 @@ The exact column names are in the header row of each file; Claude Code keeps thi
 - **Reporting files:** `heads.csv`, `heads_time.csv` (heads per cell, over-k episodes, tenure ends, candidates per decision; `MetricsCollector::WriteHeads`, `OnHeadChange`, `OnEligible`, `OnHeadsSample`), `attempts.csv` (`--LogAttempts=true`, `LossBudget::AttemptRows`), `packets.csv` columns `src_head, drop_head, drop_depth_m, drop_dsink_m` (from `SetNodeStateProbe`, ground truth, never read by a node).
 - **Scripts:** `scripts/k1.py` (fit / run / extra / report; resumable). Test: `OneHeadPerCellNeverHasTwoHeadsForLong`.
 
+## 5d. Where a run writes (7 Nov 2026)
+
+- `cb-ergr-scenario --OutDir=results/x` writes to a **new** folder `results/x_run1`, `x_run2`, ... each time (`NextRunDir`, `helper/run-summary.cc`); `--NumberedRuns=false` or `CB_ERGR_NUMBERED_RUNS=0` gives the fixed path `results/x` (the sweep scripts set it, because they read `OutDir/summary.csv`; `RunScenario` itself never renames, so tests use fixed paths).
+- **Read `run_summary.txt` first**: method, conditions, parameters and the headline results (PDR, packets, delay, energy per delivered packet, average power, lifetime, drops, hop failures, control traffic). `WriteRunSummary` builds it from `summary.csv`, `loss_budget.csv` and `heads.csv`. The detailed CSVs stay as described in section 5.
+
 ## 6. Debugging: see what one node is thinking
 
 ```bash
