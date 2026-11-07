@@ -133,7 +133,7 @@ def S(out):
 
 
 def kv(path):
-    d = {}
+    d = collections.defaultdict(float)
     for r in csv.DictReader(open(path)):
         try:
             d[(r.get("group", ""), r["key"])] = float(r["value"])
