@@ -23,6 +23,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -83,6 +84,9 @@ class MetricsCollector : public Object
         bool logDecisions = false;
         bool measureCpu = false;           ///< time Select / OnSent / OnLabel with std::chrono (cost.csv)
         bool logCounterfactual = false;   ///< write counterfactual.csv (simulator-side ground truth; no node reads it)
+        bool logAttempts = false;         ///< write attempts.csv: one row per classified DATA attempt (k = 1 experiment, 6 Nov 2026)
+        int headsPerCell = 2;             ///< k, for the over-k episodes in heads.csv
+        double electionSlotS = 1.0;       ///< election slot, for the over-k episodes in heads.csv
         // Radio numbers for the per-frame-type energy accounting (summary columns energy_<type>_*_per_delivered_j).
         double bitRateBps = 0.0;       ///< 0 = accounting off
         double preambleS = 0.0;
@@ -198,6 +202,23 @@ class MetricsCollector : public Object
     /// many ordinary nodes live in a cell without any head.
     void OnCoverageSample(uint32_t occupiedCells, uint32_t headedCells, uint32_t nodes, uint32_t nodesInHeadlessCells);
     void OnSolicit(bool answered) { (answered ? m_solicitAnswered : m_solicitsSent)++; }
+
+    // --- k = 1 experiment (6 Nov 2026): heads per cell, candidates, where packets die. GROUND TRUTH, reporting only ---
+    struct NodeState
+    {
+        bool valid = false;
+        bool isHead = false;
+        bool isSink = false;
+        double depthM = 0.0;  ///< true depth
+        double dsinkM = 0.0;  ///< true distance to the nearest sink
+    };
+    /// Simulator-side probe of a node's role and true position (packets.csv drop columns, attempts.csv).
+    void SetNodeStateProbe(std::function<NodeState(uint32_t)> probe);
+    /// A head (or sink) looked for forwarders: 'n' eligible candidates in its cell 'cell' (0 = void).
+    void OnEligible(uint16_t cell, size_t n);
+    /// Sample of the true head count per cell: total grid cells, cells holding a live ordinary node, and how many of those have
+    /// 0, 1, 2, 3+ live heads.
+    void OnHeadsSample(uint32_t totalCells, uint32_t occupied, const std::array<uint32_t, 4>& byHeads);
     /// MAC counters at the end of the run (CsmaMac only): frames dropped (queue full or too many busy deferrals), deferrals.
     /// A forwarder accepted a DATA frame addressed to it (ground truth for the loss budget).
     void OnDataDelivered(E2EKey key, uint32_t sender, uint32_t fwd);
@@ -270,6 +291,8 @@ class MetricsCollector : public Object
         bool dropped = false;
         DropReason dropReason = DropReason::TtlExpired;
         uint32_t dropNode = 0;
+        int8_t srcHead = -1, dropHead = -1; ///< role at creation / at the drop (-1 unknown)
+        double dropDepthM = -1.0, dropDsinkM = -1.0;
     };
 
     /// Ground truth for one outstanding attempt, keyed by (sender, forwarder, hopSeq).
@@ -358,6 +381,16 @@ class MetricsCollector : public Object
     uint64_t m_voidNacks = 0;
     uint64_t m_macDrops = 0, m_macDeferrals = 0;
     std::function<bool(uint16_t)> m_cellHasHead;
+    std::function<NodeState(uint32_t)> m_nodeState;
+    // heads per cell (event exact, from OnHeadChange): live head count per cell, start of the current over-k episode
+    std::map<uint16_t, int> m_cellHeads;
+    std::map<uint16_t, double> m_overStartS;
+    std::vector<std::pair<double, double>> m_overEpisodes; // (start, duration)
+    std::map<std::string, uint64_t> m_headEnds;           // why tenures ended (after warm-up): retire reasons, died
+    uint64_t m_eligDecisions = 0, m_eligSum = 0, m_eligTwo = 0, m_eligZero = 0;
+    std::set<uint16_t> m_voidCells, m_decisionCells;
+    std::vector<std::array<double, 7>> m_headsTime;         // t, total cells, occupied, cells with 0/1/2/3+ heads
+    void WriteHeads();
     double m_covOccupied = 0, m_covHeaded = 0, m_covNodes = 0, m_covNodesHeadless = 0;
     uint64_t m_noHeadGiveUps = 0, m_noHeadGiveUpsWithHead = 0, m_solicitsSent = 0, m_solicitAnswered = 0;
     uint32_t m_deadDeclarations = 0, m_deadFalse = 0, m_deadByQuorum = 0, m_deadByExpiry = 0;

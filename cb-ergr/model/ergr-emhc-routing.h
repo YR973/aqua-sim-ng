@@ -174,11 +174,17 @@ class ErgrEmhcRouting : public AquaSimRouting
     // --- Frame I/O ---
     void TransmitFrame(Ptr<Packet> packet, FrameType type, int32_t receiver, uint8_t powerLevel);
     GridGeometry& Grid() const;
+    /// Is 'cell' a neighbour of my cell under the NeighbourRule (Adjacent: 26 / 6 cells; Paper32: the paper's 32 cells)?
+    bool IsNeighbourCell(uint16_t cell) const;
+    bool Paper32() const { return m_neighbourRule == "Paper32"; }
 
     // Attributes
     double m_cellSizeM, m_boxSizeM, m_txRangeM;
     int m_headsPerCell;
     bool m_faceOnly, m_strictProgress, m_equalHminFallback;
+    std::string m_neighbourRule;
+    bool m_helloScoreStepDown, m_reassertHello;
+    Time m_lastReassert;
     double m_beaconPeriodS, m_neighbourTimeoutBeacons;
     double m_electionPeriodS, m_electionBeta, m_electionSlotS, m_electionJitterS, m_electionOffsetPerCellS;
     double m_firstElectionS, m_hysteresisM;

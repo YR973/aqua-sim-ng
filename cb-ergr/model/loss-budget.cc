@@ -46,6 +46,7 @@ LossBudget::OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t rec
         return;
     }
     m_airtimeS[static_cast<int>(type)] += Airtime(bytes);
+    m_frames[static_cast<int>(type)]++;
     if (type != FrameType::Data || receiver < 0)
     {
         return;
@@ -68,6 +69,16 @@ LossBudget::OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t rec
         if (a.cand.empty())
         {
             a.cand.push_back(static_cast<uint16_t>(receiver));
+        }
+    }
+    if (m_logAttempts)
+    {
+        const uint8_t n = m_nthHere[std::make_tuple(a.key.source, a.key.seq, node)];
+        a.nthHere = static_cast<uint8_t>(std::min<int>(255, n + 1));
+        m_nthHere[std::make_tuple(a.key.source, a.key.seq, node)] = a.nthHere;
+        if (m_attemptProbe)
+        {
+            a.info = m_attemptProbe(node, a.fwd);
         }
     }
     m_attempts.push_back(a);
@@ -321,6 +332,14 @@ LossBudget::Classify(Attempt& a)
         a.cause = cause;
         m_hopCauses[cause]++;
         chosenCause = cause;
+    }
+    if (m_logAttempts)
+    {
+        char line[256];
+        std::snprintf(line, sizeof(line), "%.3f,%u,%u,%u,%u,%u,%d,%d,%.0f,%.0f,%d,%s", a.txS, a.key.source, a.key.seq, a.sender, a.fwd,
+                      a.nthHere, a.info.senderHead ? 1 : 0, a.info.fwdSink ? 1 : 0, a.info.depthM, a.info.dsinkM, a.received ? 1 : 0,
+                      a.received ? "ok" : chosenCause.c_str());
+        m_attemptRows.emplace_back(line);
     }
     if (m_cf && a.bound && !a.cand.empty())
     {

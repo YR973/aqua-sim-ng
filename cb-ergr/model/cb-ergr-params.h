@@ -37,6 +37,11 @@ constexpr int kHeadsPerCell = 2;         // [DESIGN] D§3 P2; P0 uses 1
 constexpr bool kFaceOnly = false;        // [DESIGN] K§2.1: false = 26 adjacent cells
 constexpr bool kEqualHminFallback = true; // [DESIGN] 5 Nov 2026 (E11): with no strictly better forwarder, an equal-Hmin head (like NG2T) may be used while Hpkt allows
 constexpr bool kStrictProgress = true;   // [DESIGN] K§2.1 loop guard: candidate must be closer in hops or shallower
+// [DECIDED 6 Nov 2026, k = 1 experiment] "Adjacent" = the ERGR-EMHC-g rule (26 adjacent cells, or 6 with FaceOnly; StrictProgress;
+// predicted distance <= R). "Paper32" = P0's rule for the 433 m cells: the 32 neighbour cells of the paper (Fig. 3), G1 = lower Hmin
+// (normal), G2 = equal or higher Hmin (only when G1 is empty, while Hpkt allows), no distance filter (every pair of points in two
+// 32-neighbour cells of side R/(2 sqrt 3) is within R). CONFIRM E53.
+constexpr const char* kNeighbourRule = "Adjacent";
 } // namespace grid
 
 // ----------------------------------------------------------------- phy ----
@@ -209,6 +214,10 @@ constexpr double kBeta = 0.9;            // [CONFIRM] Q2 weight of energy in the
 constexpr double kSlotS = 1.0;           // [DESIGN] D§3 P3
 constexpr double kJitterMaxS = 0.1;      // [DESIGN] D§3 P3
 constexpr double kMembershipHysteresisM = 20.0; // [DESIGN] D§3 P3
+constexpr bool kHelloScoreStepDown = false; // [DECIDED 6 Nov 2026] option, OFF = ERGR-EMHC-g as in round 5: step-down uses the score a claimant advertised in its Hello (CONFIRM E54)
+constexpr bool kReassertHello = false;   // [DECIDED 6 Nov 2026] option, OFF = ERGR-EMHC-g as in round 5: a head that hears a WORSE claimant's Hello while the cell already has k better heads repeats its own Hello, so the claimant steps down at once (CONFIRM E54)
+constexpr double kReassertMinGapS = 2.0; // [CONFIRM] a head re-asserts at most this often
+constexpr double kReassertJitterS = 0.5; // [CONFIRM] random delay before re-asserting
 } // namespace election
 
 // ------------------------------------------------------------- learner ----

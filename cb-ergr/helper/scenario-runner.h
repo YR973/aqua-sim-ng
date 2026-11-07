@@ -53,6 +53,10 @@ struct ScenarioSettings
     double cellSizeM = params::grid::kCellSizeM;
     int headsPerCell = params::grid::kHeadsPerCell;
     bool faceOnly = params::grid::kFaceOnly;
+    std::string neighbourRule = params::grid::kNeighbourRule;
+    bool logAttempts = false;
+    bool helloScoreStepDown = params::election::kHelloScoreStepDown;
+    bool reassertHello = params::election::kReassertHello;
     double beaconPeriodS = params::timers::kBeaconPeriodS;
     bool quorumDetection = params::deadhead::kQuorumDetection;   // D3 P4
     int deadQuorum = params::deadhead::kQuorum;

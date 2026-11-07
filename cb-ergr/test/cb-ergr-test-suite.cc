@@ -2763,7 +2763,7 @@ class PowerRulesPickTheLowestFeasibleLevel : public TestCase
 {
   public:
     PowerRulesPickTheLowestFeasibleLevel()
-        : TestCase("R5: FW-P / LowestReachChosen / RR-P send at the lowest power level with predicted margin >= 0")
+        : TestCase("R5: FW-P, LowestReachChosen and RR-P send at the lowest power level with predicted margin >= 0")
     {
     }
 
@@ -3829,6 +3829,89 @@ class MembersAlwaysFindTheirCellsHead : public TestCase
 };
 
 
+// k = 1 experiment (6 Nov 2026): with one head per cell, a cell never holds two heads for longer than one election slot (plus the
+// time a Hello needs to cross the cell: propagation <= 1 s and one CSMA wait). Ideal links, so no Hello is lost; the Hello-score
+// step-down option is on (CONFIRM E54: with it off, the stale-row comparison lets a pair of claimants coexist). k = 2 is checked too.
+class OneHeadPerCellNeverHasTwoHeadsForLong : public TestCase
+{
+  public:
+    OneHeadPerCellNeverHasTwoHeadsForLong()
+        : TestCase("k = 1: no cell has 2 heads for more than one election slot; k = 2 still gives 2 heads; Paper32 runs")
+    {
+    }
+
+  private:
+    static std::map<std::string, double> ReadKeyValue(const std::string& path)
+    {
+        std::map<std::string, double> m;
+        std::ifstream f(path);
+        std::string line;
+        std::getline(f, line);
+        while (std::getline(f, line))
+        {
+            size_t comma = line.rfind(',');
+            if (comma != std::string::npos)
+            {
+                m[line.substr(0, comma)] = std::stod(line.substr(comma + 1));
+            }
+        }
+        return m;
+    }
+
+    void Run(std::map<std::string, double>& out, int k, const std::string& rule, double cell, bool fix)
+    {
+        std::string dir = std::filesystem::temp_directory_path().string() + "/cb-ergr-test-k" + std::to_string(k) + rule;
+        ScenarioSettings settings;
+        settings.outDir = dir;
+        settings.seed = 5;
+        settings.numNodes = 120;
+        settings.cellSizeM = cell;
+        settings.headsPerCell = k;
+        settings.neighbourRule = rule;
+        settings.helloScoreStepDown = fix;
+        settings.idealLinks = true;
+        settings.shadowSigmaDb = 0.0;
+        settings.bitRateBps = 17800; // the radio of configs/g-base.txt (the ERGR-EMHC paper's); the library default (5 kbit/s, 0.1 s
+        settings.preambleS = 0.0;    // preamble) makes frames so long that Hellos collide and the overlap lasts minutes (E54)
+        settings.txPowerFullW = 8;
+        settings.rxPowerW = 0.8;
+        settings.simTimeS = 1300;
+        settings.warmupS = 300;
+        settings.numSinks = 3;   // as configs/g-base.txt
+        settings.selector = "FixedWeight"; // hop ACKs, like the experiment (the traffic decides which Hello collides)
+        settings.numSources = 5; // a quiet channel: the bound holds while Hellos are not lost to collisions (E54)
+        settings.pktRateHz = 0.01;
+        settings.currentSpeed = 1.0;
+        ScenarioConfig config;
+        RegisterSettings(config, settings);
+        ScenarioResult r = RunScenario(settings, config);
+        NS_TEST_ASSERT_MSG_EQ((r.packetsCreated > 50), true, "traffic");
+        out = ReadKeyValue(dir + "/heads.csv");
+        std::filesystem::remove_all(dir);
+    }
+
+    void DoRun() override
+    {
+        const double allowanceS = params::election::kSlotS + params::election::kJitterMaxS + 1.5; // slot + jitter + propagation + CSMA wait
+        std::map<std::string, double> one, two, p32;
+        Run(one, 1, "Adjacent", 750.0, true);
+        // Limit of this test: it fixes seed and layout of the experiment's configuration. In general a Hello can be lost to a collision and
+        // then the overlap lasts until the next head beacon (up to 200 s on the loaded channel of the k = 1 experiment, CONFIRM E54).
+        NS_TEST_ASSERT_MSG_EQ((one.at("over_k_episodes_all") > 0), true, "the episode counter sees the short overlaps of claim rounds");
+        NS_TEST_ASSERT_MSG_EQ((one.at("over_k_max_s_all") <= allowanceS), true,
+                              "no cell has 2 heads for longer than one slot + Hello transit: " << one.at("over_k_max_s_all") << " s");
+        NS_TEST_ASSERT_MSG_EQ((one.at("occupied_with_2_heads") < 0.05), true, "k = 1: cells practically never show 2 heads");
+        NS_TEST_ASSERT_MSG_EQ((one.at("heads_per_occupied_cell") > 0.8), true, "k = 1: cells have a head");
+        NS_TEST_ASSERT_MSG_EQ((one.at("heads_per_occupied_cell") < 1.2), true, "k = 1: about one head per cell");
+        Run(two, 2, "Adjacent", 750.0, true);
+        NS_TEST_ASSERT_MSG_EQ((two.at("occupied_with_2_heads") > 0.5), true, "k = 2 is still supported: most cells have 2 heads");
+        Run(p32, 1, "Paper32", 433.0127, true);
+        NS_TEST_ASSERT_MSG_EQ((p32.at("decisions") > 50), true, "Paper32 neighbours: heads forward");
+        // (No overlap bound for Paper32: 433 m cells hold few nodes at N = 120, and one lost Hello decides; see CONFIRM E54.)
+    }
+};
+
+
 class CbErgrTestSuite : public TestSuite
 {
   public:
@@ -3898,6 +3981,7 @@ class CbErgrTestSuite : public TestSuite
         AddTestCase(new QelarQValueFollowsThePaperForm, TestCase::QUICK);
         AddTestCase(new PowerRulesPickTheLowestFeasibleLevel, TestCase::QUICK);
         AddTestCase(new EvidenceRuleLabelsZeroWhenTheForwarderIsHeardLate, TestCase::QUICK);
+        AddTestCase(new OneHeadPerCellNeverHasTwoHeadsForLong, TestCase::QUICK);
     }
 };
 

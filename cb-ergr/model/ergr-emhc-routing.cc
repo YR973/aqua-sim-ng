@@ -72,6 +72,19 @@ ErgrEmhcRouting::GetTypeId()
             .AddAttribute("FaceOnly", "Only the 6 face-adjacent cells count as neighbours.",
                           BooleanValue(params::grid::kFaceOnly),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_faceOnly), MakeBooleanChecker())
+            .AddAttribute("NeighbourRule",
+                          "Adjacent (26 or 6 adjacent cells, StrictProgress, predicted distance <= R) or Paper32 (the paper's 32 "
+                          "neighbour cells, G1 = lower Hmin, G2 = equal or higher Hmin when G1 is empty, no distance filter).",
+                          StringValue(params::grid::kNeighbourRule),
+                          MakeStringAccessor(&ErgrEmhcRouting::m_neighbourRule), MakeStringChecker())
+            .AddAttribute("HelloScoreStepDown",
+                          "Step-down compares a claimant by the score in its Hello when that is fresher than its beacon (6 Nov 2026 fix).",
+                          BooleanValue(params::election::kHelloScoreStepDown),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_helloScoreStepDown), MakeBooleanChecker())
+            .AddAttribute("ReassertHello",
+                          "A head that hears a worse claimant's Hello while the cell has k better heads repeats its own Hello.",
+                          BooleanValue(params::election::kReassertHello),
+                          MakeBooleanAccessor(&ErgrEmhcRouting::m_reassertHello), MakeBooleanChecker())
             .AddAttribute("EqualHminFallback", "With no strictly better forwarder, allow heads of equal Hmin while Hpkt allows.",
                           BooleanValue(params::grid::kEqualHminFallback),
                           MakeBooleanAccessor(&ErgrEmhcRouting::m_equalHminFallback), MakeBooleanChecker())
@@ -214,6 +227,8 @@ ErgrEmhcRouting::ErgrEmhcRouting()
       m_faceOnly(params::grid::kFaceOnly),
       m_strictProgress(params::grid::kStrictProgress),
       m_equalHminFallback(params::grid::kEqualHminFallback),
+      m_helloScoreStepDown(params::election::kHelloScoreStepDown),
+      m_reassertHello(params::election::kReassertHello),
       m_beaconPeriodS(params::timers::kBeaconPeriodS),
       m_neighbourTimeoutBeacons(params::timers::kNeighbourTimeoutBeacons),
       m_electionPeriodS(params::timers::kElectionPeriodS),
@@ -298,6 +313,12 @@ ErgrEmhcRouting::Grid() const
         m_grid = std::make_unique<GridGeometry>(m_boxSizeM, m_cellSizeM);
     }
     return *m_grid;
+}
+
+bool
+ErgrEmhcRouting::IsNeighbourCell(uint16_t cell) const
+{
+    return Paper32() ? Grid().AreNeighboursPaper(m_cell, cell) : Grid().AreNeighbours(m_cell, cell, m_faceOnly);
 }
 
 bool
@@ -400,7 +421,7 @@ ErgrEmhcRouting::Start()
         services.airtimeS = [phy](uint32_t bytes) { return phy->CalcTxTime(bytes).GetSeconds(); };
         services.cellId = [this]() { return m_cell; };
         services.isHead = [this]() { return m_isHead; };
-        services.isNeighbourCell = [this](uint16_t cell) { return Grid().AreNeighbours(m_cell, cell, m_faceOnly); };
+        services.isNeighbourCell = [this](uint16_t cell) { return IsNeighbourCell(cell); };
         m_selector->SetServices(services);
         m_selector->Start();
         if (m_shadow)
@@ -514,12 +535,12 @@ ErgrEmhcRouting::RecomputeHmin()
     for (const auto& entry : m_table.Rows())
     {
         const NeighbourEntry& row = entry.second;
-        bool inG1 = row.isSink || (row.isHead && Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly));
+        bool inG1 = row.isSink || (row.isHead && IsNeighbourCell(row.cellId));
         if (!inG1 || row.hmin >= best)
         {
             continue;
         }
-        if (Distance(row.PredictedPos(now), myPos) <= m_txRangeM)
+        if ((Paper32() && !row.isSink) || Distance(row.PredictedPos(now), myPos) <= m_txRangeM)
         {
             best = row.hmin;
         }
@@ -550,6 +571,7 @@ ErgrEmhcRouting::BeaconTick()
                 m_isHead = false; // a dead head ends its tenure silently: no handover (unplanned loss)
                 m_rank = 0;
                 m_metrics->OnHeadChange(m_id, false, m_cell);
+                m_metrics->OnEvent(m_id, "HEAD_DIED", "");
             }
         }
         return; // a dead node stops all activity
@@ -867,7 +889,11 @@ ErgrEmhcRouting::CountBetterHeadsInCell()
         {
             continue;
         }
-        double theirs = ScoreOf(row.battery, row.PredictedPos(now), row.cellId, false);
+        // Step-down (6 Nov 2026 fix, CONFIRM E54): a head that claimed more recently than its last beacon is compared by the score it
+        // advertised in its Hello, the same number it compared itself with. Recomputing it from a stale row (battery, position at
+        // its last beacon) let two claimants each rank the other lower, so neither stepped down until the next beacon.
+        const bool useHello = m_helloScoreStepDown && row.helloScore >= 0.0 && row.helloTime >= row.beaconTime;
+        double theirs = useHello ? row.helloScore : ScoreOf(row.battery, row.PredictedPos(now), row.cellId, false);
         if (theirs > mine || (theirs == mine && row.id < m_id))
         {
             better++;
@@ -1049,6 +1075,8 @@ ErgrEmhcRouting::OnElectionFrame(const ErgrElectionHeader& hdr)
         row->isHead = (hdr.kind == ErgrElectionHeader::Hello);
         row->headRank = row->isHead ? hdr.rank : 0;
         row->cellId = hdr.cellId;
+        row->helloScore = row->isHead ? hdr.scoreQ / 65535.0 : -1.0;
+        row->helloTime = Simulator::Now();
     }
     if (hdr.cellId != m_cell)
     {
@@ -1060,6 +1088,20 @@ ErgrEmhcRouting::OnElectionFrame(const ErgrElectionHeader& hdr)
         if (m_isHead && CountBetterHeadsInCell() >= m_headsPerCell)
         {
             BecomeMember("outranked by better heads");
+        }
+        else if (m_isHead && m_reassertHello && CountHeadsInCell() >= m_headsPerCell &&
+                 (Simulator::Now() - m_lastReassert).GetSeconds() >= params::election::kReassertMinGapS)
+        {
+            // The claimant ranks below me and the cell is full: it cannot know that until it hears me (my next beacon may be
+            // 100 s away, and I removed nothing). Say it now.
+            m_lastReassert = Simulator::Now();
+            Simulator::Schedule(Seconds(m_uniform->GetValue(0.0, params::election::kReassertJitterS)), [this]() {
+                if (IsAlive() && m_isHead)
+                {
+                    m_metrics->OnEvent(m_id, "HELLO_REASSERT", "cell=" + std::to_string(m_cell));
+                    BecomeHead(m_rank);
+                }
+            });
         }
     }
     else if (!m_isSink && CountHeadsInCell() < m_headsPerCell)
@@ -1119,17 +1161,31 @@ ErgrEmhcRouting::GetEligible(const HeldPacket& pkt, Time now) const
             {
                 continue;
             }
-            bool inG1 = row.isSink || (row.isHead && Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly));
+            bool inG1 = row.isSink || (row.isHead && IsNeighbourCell(row.cellId));
             if (!inG1 || row.hmin > pkt.hpkt)
             {
                 continue; // spec §5.1: Hmin_j <= Hpkt
             }
             Vector predicted = row.PredictedPos(now);
-            if (Distance(predicted, myPos) > m_txRangeM)
+            if (Paper32() && row.isSink && Distance(predicted, myPos) > m_txRangeM)
+            {
+                continue; // a sink is a direct hop: it must be in range
+            }
+            if (Paper32())
+            {
+                // P0's tables: G1 = neighbour cells with a lower Hmin than mine (normal mode); G2 = equal or higher Hmin, used only
+                // when G1 is empty, and only while the hop budget allows another hop. No distance filter (cell geometry ensures R).
+                const bool g1 = row.isSink || row.hmin < m_hmin;
+                if ((pass == 0 && !g1) || (pass == 1 && (g1 || row.hmin >= pkt.hpkt)))
+                {
+                    continue;
+                }
+            }
+            else if (Distance(predicted, myPos) > m_txRangeM)
             {
                 continue; // K§2.1 predicted distance <= R
             }
-            if (pass == 0)
+            else if (pass == 0)
             {
                 if (m_strictProgress && !row.isSink && !(row.hmin < m_hmin || predicted.z < myPos.z))
                 {
@@ -1172,6 +1228,7 @@ ErgrEmhcRouting::RoutePacket(HeldPacket pkt)
     }
     Time now = Simulator::Now();
     std::vector<Candidate> eligible = GetEligible(pkt, now);
+    m_metrics->OnEligible(m_cell, eligible.size()); // reporting only
     if (eligible.empty())
     {
         HandleVoid(pkt);
@@ -1707,7 +1764,7 @@ ErgrEmhcRouting::IsRelevantHead(const NeighbourEntry& row) const
         return true;
     }
     return IsSuspect(row.id, Simulator::Now()) &&
-           const_cast<ErgrEmhcRouting*>(this)->Grid().AreNeighbours(m_cell, row.cellId, m_faceOnly);
+           IsNeighbourCell(row.cellId);
 }
 
 bool

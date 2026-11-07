@@ -111,6 +111,7 @@ MetricsCollector::Configure(const Config& cfg)
     m_cfg = cfg;
     m_loss.Configure(m_cfg.bitRateBps, m_cfg.preambleS, m_cfg.warmupS, m_cfg.simTimeS);
     m_loss.EnableCounterfactual(m_cfg.logCounterfactual);
+    m_loss.EnableAttemptLog(m_cfg.logAttempts);
     m_loss.SetDeathProbe([this](uint32_t node) {
         auto it = m_nodes.find(node);
         return (it != m_nodes.end() && it->second.energy) ? it->second.energy->GetDeathTimeS() : -1.0;
@@ -273,6 +274,11 @@ MetricsCollector::OnPacketCreated(E2EKey key, uint32_t node)
     rec.lastActivityS = rec.createdS;
     rec.path = std::to_string(node);
     Node(node).dataOriginated += Counting() ? 1 : 0;
+    if (m_nodeState)
+    {
+        NodeState st = m_nodeState(node);
+        rec.srcHead = st.valid ? (st.isHead ? 1 : 0) : -1;
+    }
 }
 
 void
@@ -341,6 +347,57 @@ MetricsCollector::OnDrop(uint32_t node, E2EKey key, DropReason reason)
     it->second.dropReason = reason;
     it->second.dropNode = node;
     it->second.lastActivityS = NowS();
+    if (m_nodeState)
+    {
+        NodeState st = m_nodeState(node);
+        if (st.valid)
+        {
+            it->second.dropHead = st.isHead ? 1 : 0;
+            it->second.dropDepthM = st.depthM;
+            it->second.dropDsinkM = st.dsinkM;
+        }
+    }
+}
+
+void
+MetricsCollector::SetNodeStateProbe(std::function<NodeState(uint32_t)> probe)
+{
+    m_nodeState = probe;
+    m_loss.SetAttemptProbe([this](uint32_t sender, uint32_t fwd) {
+        LossBudget::AttemptInfo info;
+        NodeState a = m_nodeState(sender);
+        NodeState b = m_nodeState(fwd);
+        info.senderHead = a.isHead || a.isSink;
+        info.fwdSink = b.isSink;
+        info.depthM = static_cast<float>(a.depthM);
+        info.dsinkM = static_cast<float>(a.dsinkM);
+        return info;
+    });
+}
+
+void
+MetricsCollector::OnEligible(uint16_t cell, size_t n)
+{
+    if (!Counting())
+    {
+        return;
+    }
+    m_eligDecisions++;
+    m_eligSum += n;
+    m_eligTwo += n >= 2 ? 1 : 0;
+    m_eligZero += n == 0 ? 1 : 0;
+    m_decisionCells.insert(cell);
+    if (n == 0)
+    {
+        m_voidCells.insert(cell);
+    }
+}
+
+void
+MetricsCollector::OnHeadsSample(uint32_t totalCells, uint32_t occupied, const std::array<uint32_t, 4>& byHeads)
+{
+    m_headsTime.push_back({NowS(), double(totalCells), double(occupied), double(byHeads[0]), double(byHeads[1]), double(byHeads[2]),
+                           double(byHeads[3])});
 }
 
 void
@@ -737,6 +794,10 @@ MetricsCollector::OnEvent(uint32_t node, const std::string& kind, const std::str
     {
         m_voidNacks++;
     }
+    if (Counting() && (kind == "HEAD_RETIRED" || kind == "HEAD_DIED"))
+    {
+        m_headEnds[kind == "HEAD_DIED" ? std::string("died") : details]++;
+    }
     if (m_cfg.logEvents)
     {
         m_events.push_back({NowS(), node, kind, details});
@@ -748,6 +809,28 @@ MetricsCollector::OnHeadChange(uint32_t node, bool isHead, uint16_t cellId)
 {
     NodeStats& n = Node(node);
     double now = NowS();
+    const bool becomes = isHead && n.headSinceS < 0.0;
+    const bool ends = !isHead && n.headSinceS >= 0.0;
+    if (becomes || ends)
+    {
+        // live heads per cell, as each head itself sees its cell; an over-k episode lasts while the cell has more than k heads
+        int& count = m_cellHeads[cellId];
+        count += becomes ? 1 : -1;
+        const int k = m_cfg.headsPerCell;
+        if (becomes && count == k + 1)
+        {
+            m_overStartS[cellId] = now;
+        }
+        else if (ends && count == k)
+        {
+            auto it = m_overStartS.find(cellId);
+            if (it != m_overStartS.end())
+            {
+                m_overEpisodes.emplace_back(it->second, now - it->second);
+                m_overStartS.erase(it);
+            }
+        }
+    }
     if (isHead && n.headSinceS < 0.0)
     {
         n.headSinceS = now;
@@ -917,10 +1000,20 @@ MetricsCollector::Finalize()
     {
         WriteEvents();
     }
+    WriteHeads();
     if (m_loss.Enabled())
     {
         WriteLossBudget();
         WriteCost();
+        if (m_cfg.logAttempts)
+        {
+            std::ofstream at(m_cfg.outDir + "/attempts.csv");
+            at << LossBudget::AttemptHeader() << '\n';
+            for (const std::string& row : m_loss.AttemptRows())
+            {
+                at << row << '\n';
+            }
+        }
         if (m_cfg.logCounterfactual)
         {
             std::ofstream cf(m_cfg.outDir + "/counterfactual.csv");
@@ -1269,6 +1362,10 @@ MetricsCollector::WriteLossBudget()
         f << "airtime_erlang," << Lower(FrameTypeName(t)) << ',' << m_loss.AirtimeS(t) / window << '\n';
     }
     f << "airtime_erlang,total," << total / window << '\n';
+    for (FrameType t : {FrameType::Data, FrameType::Ack, FrameType::Beacon, FrameType::Election, FrameType::Handover, FrameType::Nack})
+    {
+        f << "frames," << Lower(FrameTypeName(t)) << ',' << m_loss.Frames(t) << '\n';
+    }
     f << "routing,void_nacks," << m_voidNacks << '\n';
 }
 
@@ -1278,7 +1375,7 @@ MetricsCollector::WritePackets()
     std::ofstream f(m_cfg.outDir + "/packets.csv");
     f << std::setprecision(8);
     f << "source,seq,created_s,status,delivered_s,sink,delay_s,hops,data_tx,retx,path,drop_node,"
-         "drop_reason,loss_cause\n";
+         "drop_reason,loss_cause,src_head,drop_head,drop_depth_m,drop_dsink_m\n";
     for (const auto& entry : m_packets)
     {
         const PacketRecord& r = entry.second;
@@ -1287,7 +1384,85 @@ MetricsCollector::WritePackets()
           << (r.delivered ? r.deliveredS : -1.0) << ',' << (r.delivered ? int(r.sinkNode) : -1) << ','
           << (r.delivered ? r.deliveredS - r.createdS : -1.0) << ',' << r.hops << ',' << r.dataTx << ','
           << r.retx << ',' << r.path << ',' << (r.dropped ? int(r.dropNode) : -1) << ','
-          << (r.dropped ? DropReasonName(r.dropReason) : "") << ',' << LossCauseOf(r) << '\n';
+          << (r.dropped ? DropReasonName(r.dropReason) : "") << ',' << LossCauseOf(r) << ',' << int(r.srcHead) << ','
+          << int(r.dropHead) << ',' << r.dropDepthM << ',' << r.dropDsinkM << '\n';
+    }
+}
+
+// heads.csv (key,value) and heads_time.csv: the k = 1 experiment of 6 Nov 2026 (reporting only).
+void
+MetricsCollector::WriteHeads()
+{
+    const double endS = m_cfg.simTimeS > 0 ? m_cfg.simTimeS : NowS();
+    // close open over-k episodes at the end of the run
+    std::vector<std::pair<double, double>> episodes = m_overEpisodes;
+    for (const auto& open : m_overStartS)
+    {
+        episodes.emplace_back(open.second, endS - open.second);
+    }
+    double maxAll = 0.0, maxWin = 0.0, totalWin = 0.0;
+    uint64_t nAll = 0, nWin = 0, longAll = 0, longWin = 0;
+    for (const auto& e : episodes)
+    {
+        nAll++;
+        maxAll = std::max(maxAll, e.second);
+        longAll += e.second > m_cfg.electionSlotS ? 1 : 0;
+        if (e.first >= m_cfg.warmupS)
+        {
+            nWin++;
+            maxWin = std::max(maxWin, e.second);
+            totalWin += e.second;
+            longWin += e.second > m_cfg.electionSlotS ? 1 : 0;
+        }
+    }
+    std::ofstream f(m_cfg.outDir + "/heads.csv");
+    f << std::setprecision(10) << "key,value\n";
+    f << "k," << m_cfg.headsPerCell << "\nelection_slot_s," << m_cfg.electionSlotS << '\n';
+    f << "over_k_episodes_all," << nAll << "\nover_k_max_s_all," << maxAll << "\nover_k_longer_than_slot_all," << longAll << '\n';
+    f << "over_k_episodes," << nWin << "\nover_k_max_s," << maxWin << "\nover_k_longer_than_slot," << longWin
+      << "\nover_k_cell_seconds," << totalWin << '\n';
+    // tenure ends after warm-up, by reason
+    for (const auto& r : m_headEnds)
+    {
+        f << "tenure_end:" << r.first << ',' << r.second << '\n';
+    }
+    f << "elections_after_warmup," << m_electionsAfterWarmup << '\n';
+    f << "decisions," << m_eligDecisions << "\ncandidates_mean," << (m_eligDecisions ? double(m_eligSum) / m_eligDecisions : 0.0)
+      << "\nshare_two_or_more," << (m_eligDecisions ? double(m_eligTwo) / m_eligDecisions : 0.0) << "\nshare_void,"
+      << (m_eligDecisions ? double(m_eligZero) / m_eligDecisions : 0.0) << "\ndecision_cells," << m_decisionCells.size()
+      << "\nvoid_cells," << m_voidCells.size() << '\n';
+    // time averages over the measured window
+    double n = 0, total = 0, occ = 0, h[4] = {0, 0, 0, 0};
+    for (const auto& row : m_headsTime)
+    {
+        if (row[0] < m_cfg.warmupS)
+        {
+            continue;
+        }
+        n++;
+        total += row[1];
+        occ += row[2];
+        for (int i = 0; i < 4; ++i)
+        {
+            h[i] += row[3 + i];
+        }
+    }
+    if (n > 0)
+    {
+        f << "cells_total," << total / n << "\ncells_occupied_mean," << occ / n << "\ncells_empty_share," << 1.0 - occ / total << '\n';
+        const char* names[] = {"occupied_with_0_heads", "occupied_with_1_head", "occupied_with_2_heads", "occupied_with_3plus_heads"};
+        for (int i = 0; i < 4; ++i)
+        {
+            f << names[i] << ',' << (occ > 0 ? h[i] / occ : 0.0) << '\n';
+        }
+        f << "occupied_with_head_share," << (occ > 0 ? 1.0 - h[0] / occ : 0.0) << '\n';
+        f << "heads_per_occupied_cell," << (occ > 0 ? (h[1] + 2 * h[2] + 3 * h[3]) / occ : 0.0) << '\n';
+    }
+    std::ofstream t(m_cfg.outDir + "/heads_time.csv");
+    t << "t,cells_total,occupied,h0,h1,h2,h3plus\n";
+    for (const auto& row : m_headsTime)
+    {
+        t << row[0] << ',' << row[1] << ',' << row[2] << ',' << row[3] << ',' << row[4] << ',' << row[5] << ',' << row[6] << '\n';
     }
 }
 

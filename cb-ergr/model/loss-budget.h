@@ -57,6 +57,19 @@ class LossBudget
     const std::vector<std::string>& CounterfactualRows() const { return m_cfRows; }
     static const char* CounterfactualHeader() { return "t,sender,source,seq,attempt_of_packet,chosen,chosen_received,chosen_cause,shadow,n_cand,candidates"; }
 
+    /// Per-attempt log (k = 1 experiment, 6 Nov 2026): role / true position of the sender at the attempt, from a simulator-side probe.
+    struct AttemptInfo
+    {
+        bool senderHead = false, fwdSink = false;
+        float depthM = -1.0f, dsinkM = -1.0f;
+    };
+    void EnableAttemptLog(bool on) { m_logAttempts = on; }
+    void SetAttemptProbe(std::function<AttemptInfo(uint32_t sender, uint32_t fwd)> probe) { m_attemptProbe = probe; }
+    const std::vector<std::string>& AttemptRows() const { return m_attemptRows; }
+    static const char* AttemptHeader() { return "t,source,seq,sender,fwd,nth_here,sender_head,fwd_sink,depth_m,dsink_m,received,cause"; }
+    /// Frames handed to the MAC after warm-up, by type.
+    uint64_t Frames(FrameType t) const { return m_frames[static_cast<int>(t)]; }
+
     void OnDataKey(uint32_t sender, E2EKey key) { m_lastKey[sender] = key; }
     void OnFrameTx(uint32_t node, FrameType type, uint32_t bytes, int32_t receiver, double nowS);
     /// 'dataId' (DATA frames only) = sourceId << 32 | sourceSeq << 16 | forwarderId, read from the frame header by the channel:
@@ -98,6 +111,8 @@ class LossBudget
         };
         std::map<uint32_t, Eval> eval;     // per candidate that was within range of the transmission
         uint8_t nth = 1;                   // how many DATA attempts this sender had made for this packet so far
+        uint8_t nthHere = 1;               // attempt number of this sender for this packet (1 = first attempt, >1 = retry)
+        AttemptInfo info;
     };
     struct Arrival
     {
@@ -137,6 +152,11 @@ class LossBudget
     std::map<uint32_t, std::pair<std::vector<uint16_t>, int>> m_pendingCand;   // per sender: candidates of the decision just made
     std::map<std::pair<uint16_t, uint16_t>, uint8_t> m_nthAttempt;              // (source, seq) -> attempts so far (any node)
     std::vector<std::string> m_cfRows;
+    bool m_logAttempts = false;
+    std::function<AttemptInfo(uint32_t, uint32_t)> m_attemptProbe;
+    std::map<std::tuple<uint16_t, uint16_t, uint32_t>, uint8_t> m_nthHere; // (source, seq, sender) -> attempts so far
+    std::vector<std::string> m_attemptRows;
+    std::array<uint64_t, 8> m_frames{};
 };
 
 } // namespace cbergr

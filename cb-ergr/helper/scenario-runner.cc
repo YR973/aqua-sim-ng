@@ -70,6 +70,10 @@ RegisterSettings(ScenarioConfig& c, ScenarioSettings& s)
     c.Add("CellSizeM", &s.cellSizeM, "Grid cell side (m)");
     c.Add("HeadsPerCell", &s.headsPerCell, "Heads per cell (k)");
     c.Add("FaceOnly", &s.faceOnly, "Only face-adjacent cells are neighbours");
+    c.Add("NeighbourRule", &s.neighbourRule, "Adjacent (26 / 6 cells, strict progress, distance <= R) or Paper32 (P0's 32 cells, G1/G2)");
+    c.Add("HelloScoreStepDown", &s.helloScoreStepDown, "Step-down compares a claimant by the score in its Hello (6 Nov 2026 fix); false = the round-5 rule");
+    c.Add("ReassertHello", &s.reassertHello, "A head repeats its Hello when it hears a worse claimant in a full cell (6 Nov 2026 option)");
+    c.Add("LogAttempts", &s.logAttempts, "Write attempts.csv (one row per DATA attempt: hop, role, true depth, cause)");
     c.Add("BeaconPeriodS", &s.beaconPeriodS, "Beacon interval (s)");
     c.Add("QuorumDetection", &s.quorumDetection, "D3 P4: declare a silent head dead after its beacon is overdue and a quorum agrees");
     c.Add("DeadGuardS", &s.deadGuardS, "Guard past the advertised next beacon before a head counts as overdue (s)");
@@ -217,6 +221,9 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
     mc.logFrames = s.logFrames;
     mc.logDecisions = s.logDecisions;
     mc.logCounterfactual = s.logCounterfactual;
+    mc.logAttempts = s.logAttempts;
+    mc.headsPerCell = s.headsPerCell;
+    mc.electionSlotS = params::election::kSlotS;
     mc.measureCpu = s.measureCpu;
     mc.bitRateBps = s.bitRateBps;
     mc.preambleS = s.preambleS;
@@ -371,6 +378,9 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         routing->SetAttribute("TxRangeM", DoubleValue(s.rangeM));
         routing->SetAttribute("HeadsPerCell", UintegerValue(s.headsPerCell));
         routing->SetAttribute("FaceOnly", BooleanValue(s.faceOnly));
+        routing->SetAttribute("NeighbourRule", StringValue(s.neighbourRule));
+        routing->SetAttribute("HelloScoreStepDown", BooleanValue(s.helloScoreStepDown));
+        routing->SetAttribute("ReassertHello", BooleanValue(s.reassertHello));
         routing->SetAttribute("BeaconPeriodS", DoubleValue(s.beaconPeriodS));
         routing->SetAttribute("LeanBeacons", BooleanValue(s.leanBeacons));
         routing->SetAttribute("ChannelAwareBeacons", BooleanValue(s.channelAwareBeacons));
@@ -470,9 +480,45 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
         }
         return false;
     });
+    {
+        // Ground truth of a node's role and position for the drop / attempt logs (reporting only; never read by a node).
+        std::vector<Vector> sinkPos;
+        for (int i = 0; i < numSinks; ++i)
+        {
+            sinkPos.push_back(nodes.Get(i)->GetObject<MobilityModel>()->GetPosition());
+        }
+        std::map<uint32_t, Ptr<ErgrEmhcRouting>> byId;
+        for (size_t j = 0; j < routings.size(); ++j)
+        {
+            byId[static_cast<uint32_t>(j)] = routings[j]; // routings are created in node-id order (sinks first)
+        }
+        metrics->SetNodeStateProbe([nodes, sinkPos, byId](uint32_t id) {
+            MetricsCollector::NodeState st;
+            auto it = byId.find(id);
+            if (it == byId.end())
+            {
+                return st;
+            }
+            Vector p = nodes.Get(id)->GetObject<MobilityModel>()->GetPosition();
+            st.valid = true;
+            st.isSink = it->second->IsSink();
+            st.isHead = it->second->IsHead();
+            st.depthM = p.z;
+            st.dsinkM = 1e9;
+            for (const Vector& q : sinkPos)
+            {
+                st.dsinkM = std::min(st.dsinkM, CalculateDistance(p, q));
+            }
+            return st;
+        });
+    }
+    const uint32_t totalCells = [&]() {
+        int perAxis = std::max(1, static_cast<int>(std::ceil(s.boxSizeM / s.cellSizeM - 1e-9)));
+        return static_cast<uint32_t>(perAxis * perAxis * perAxis);
+    }();
     // Ground-truth head coverage, sampled every 25 s (reporting only).
     auto sampleCoverage = std::make_shared<std::function<void()>>();
-    *sampleCoverage = [routings, metrics, sampleCoverage]() {
+    *sampleCoverage = [routings, metrics, sampleCoverage, totalCells]() {
         std::map<uint16_t, std::pair<int, int>> cells; // cell -> (live ordinary nodes, live heads)
         for (const Ptr<ErgrEmhcRouting>& r : routings)
         {
@@ -491,6 +537,12 @@ RunScenario(const ScenarioSettings& s, const ScenarioConfig& config)
             headless += c.second.second > 0 ? 0 : c.second.first;
         }
         metrics->OnCoverageSample(cells.size(), headed, nodes, headless);
+        std::array<uint32_t, 4> byHeads{0, 0, 0, 0};
+        for (const auto& c : cells)
+        {
+            byHeads[std::min(3, c.second.second)]++;
+        }
+        metrics->OnHeadsSample(totalCells, cells.size(), byHeads);
         if (metrics->GetConfig().logEvents)
         {
             std::ostringstream d;

@@ -42,6 +42,8 @@ struct NeighbourEntry
     bool hasSnr = false;
     bool hasChannel = false;  ///< ChannelAwareBeacons: the node advertised its ambient noise
     double noiseDb = 0.0;     ///< its smoothed ambient noise (dB, band noise level)
+    double helloScore = -1.0; ///< election score the node advertised in its latest Hello (-1 = none since its last beacon)
+    Time helloTime;           ///< when that Hello was received
 
     /// Position extrapolated to 'now' with the advertised velocity (spec §8.1).
     Vector PredictedPos(Time now) const
